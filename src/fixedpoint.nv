@@ -1,0 +1,194 @@
+// fixedpoint — the text half: a Q number as decimal digits, and
+// decimal digits back to a Q number.
+//
+// Every body is a `todo()`.  The signatures are the design, and the
+// compiler checks them as claims; see the README for the stamp.
+//
+// WHY THERE IS A SIXTH MODULE.  The four Q modules and `fxmath` speak
+// `Int` and `Float` and they build for a Cortex-M.  This one speaks
+// `Str`, which does not link at `@tier(embedded)`: the embedded runtime
+// defines no `novo_str_*` symbol, so a device that called one would
+// fail at the linker rather than at the type checker.  One host-only
+// function anywhere in a compilation unit is an undefined symbol on a
+// device whether or not the firmware calls it, so the text lives here.
+//
+// A DEVICE THAT MUST PRINT A NUMBER uses `numfmt-nv`, which writes
+// digits into a caller's buffer and allocates nothing, over the integer
+// and fractional parts this package gives it.  That is one line of
+// arithmetic a firmware can afford; a `Str` is not.
+//
+// WHY THE ENGINE TAKES A RAW AND A WIDTH.  `format_raw` and `parse_raw`
+// are the whole of the conversion, with the format described by two
+// integers rather than by a type.  The four typed wrappers are one line
+// each on top.  That arrangement is what lets a caller who needs a
+// format this package does not ship — a Q12.20, say — use the text half
+// anyway, and it is the closest thing to the type parameter the
+// language does not have.
+//
+// WHY A PARSE ANSWERS A RAW AND NOT A Q NUMBER.  A `@value` struct may
+// not be the payload of a `Result`: it is unboxed, and the position has
+// no unboxed lowering.  So the fallible direction answers the integer
+// the value wraps and `fxq16_16.from_raw` is the one line that makes it
+// a number again.
+
+// What is wrong with a number being parsed, or with a format being
+// described.
+//
+// The variants are prefixed because a variant is constructed by name
+// across the whole assembly, and `Overflow` and `BadDigit` are names
+// every parser wants.
+pub enum FxError
+    // A character that is not a digit, a sign, a decimal point or
+    // surrounding space.
+    //
+    // `at` is the byte offset and `ch` is the byte, so a caller can
+    // print the input with a caret under the problem.
+    FxBadDigit(at: Int, ch: Int)
+    // The input had no digits at all — an empty string, a lone sign, or
+    // a lone decimal point.
+    FxNoDigits
+    // More than one decimal point, or a sign after the digits started.
+    FxMalformed(at: Int)
+    // The value is outside what the format holds.
+    //
+    // `raw` is what the value would have been and `limit` is the bound
+    // it passed, both as stored integers, so a caller can report the
+    // range in the format's own units rather than in decimal it would
+    // have to convert back.
+    FxOutOfRange(raw: Int, limit: Int)
+    // A format described with a fractional width outside 0 ..= 62, or a
+    // container width outside 1 ..= 64.
+    FxBadFormat(frac_bits: Int, total_bits: Int)
+
+// The standard `Error` implementation, so a bad number can be reported
+// by anything that reports errors.
+impl Error for FxError
+    // Answer the one-line report: what was wrong, and at what byte
+    // offset when the input is what was wrong.
+    fn message(self) -> Str
+        todo("fixedpoint.FxError.message")
+
+// ── The engine ──────────────────────────────────────────────────────
+
+// A stored integer as decimal digits, with `places` digits after the
+// point.
+//
+// The conversion is EXACT to the digits asked for: a fixed-point value
+// is a rational with a power of two underneath, so its decimal
+// expansion terminates, and `places` chooses where to stop rather than
+// how much to guess.  Digits past `places` are rounded, halves away
+// from zero.
+//
+// `places` of zero prints no point at all.  A `places` large enough to
+// reach the end of the expansion — 16 for a Q16.16, 24 for a Q8.24 —
+// prints the value with nothing lost, which is what a test comparing
+// two implementations wants.
+//
+// ```novo
+// use fixedpoint
+//
+// fn main() [io]
+//     // 32768 over 2^16 is exactly one half.
+//     println(fixedpoint.format_raw(32768, 16, 4))   // 0.5000
+// ```
+pub fn format_raw(raw: Int, frac_bits: Int, places: Int) -> Str
+    todo("fixedpoint.format_raw")
+
+// Decimal digits as a stored integer, for a format described by its
+// fractional width, its container width and its signedness.
+//
+// Accepts an optional sign, digits, an optional point, digits, and
+// surrounding space — and nothing else: no exponent, no thousands
+// separator, no hexadecimal.  A fixed-point format has a bounded range
+// by construction, so a value written in exponent notation is a value
+// that does not belong in one.
+//
+// Rounds to the nearest representable value, halves away from zero, and
+// answers `FxOutOfRange` when the value leaves the container rather
+// than clamping — a configuration file that asks for 40000.0 in a
+// Q16.16 is a configuration file to fix.
+//
+// ```novo
+// use fixedpoint
+//
+// fn main() [io]
+//     match fixedpoint.parse_raw("-0.5", 16, 32, true)
+//         Ok(raw) => println("${raw}")   // -32768
+//         Err(e)  => println(e.message())
+// ```
+pub fn parse_raw(s: Str, frac_bits: Int, total_bits: Int, signed: Bool) -> Result<Int, FxError>
+    todo("fixedpoint.parse_raw")
+
+// ── The four shipped formats ────────────────────────────────────────
+
+// A Q16.16 as decimal digits, with `places` after the point.
+//
+// ```novo
+// use fxq16_16
+// use fixedpoint
+//
+// fn main() [io]
+//     println(fixedpoint.format_q16_16(fxq16_16.from_ratio(1, 4), 3))   // 0.250
+// ```
+pub fn format_q16_16(x: FxQ16_16, places: Int) -> Str
+    todo("fixedpoint.format_q16_16")
+
+// Decimal digits as a Q16.16's stored integer.
+//
+// Answers the raw rather than the number, because a `@value` struct may
+// not be a `Result` payload; `fxq16_16.from_raw` is the line that
+// follows.
+//
+// ```novo
+// use fxq16_16
+// use fixedpoint
+//
+// fn main() [io]
+//     match fixedpoint.parse_q16_16("1.5")
+//         Ok(raw) => println("${fxq16_16.from_raw(raw).raw}")   // 98304
+//         Err(e)  => println(e.message())
+// ```
+pub fn parse_q16_16(s: Str) -> Result<Int, FxError>
+    todo("fixedpoint.parse_q16_16")
+
+// A Q1.15 as decimal digits.
+pub fn format_q1_15(x: FxQ1_15, places: Int) -> Str
+    todo("fixedpoint.format_q1_15")
+
+// Decimal digits as a Q1.15's stored integer.
+pub fn parse_q1_15(s: Str) -> Result<Int, FxError>
+    todo("fixedpoint.parse_q1_15")
+
+// A Q8.24 as decimal digits.
+pub fn format_q8_24(x: FxQ8_24, places: Int) -> Str
+    todo("fixedpoint.format_q8_24")
+
+// Decimal digits as a Q8.24's stored integer.
+pub fn parse_q8_24(s: Str) -> Result<Int, FxError>
+    todo("fixedpoint.parse_q8_24")
+
+// A UQ16.16 as decimal digits.
+pub fn format_uq16_16(x: FxUQ16_16, places: Int) -> Str
+    todo("fixedpoint.format_uq16_16")
+
+// Decimal digits as a UQ16.16's stored integer.  A leading `-` is
+// `FxOutOfRange`, not a negative number.
+pub fn parse_uq16_16(s: Str) -> Result<Int, FxError>
+    todo("fixedpoint.parse_uq16_16")
+
+// ── Describing a format ─────────────────────────────────────────────
+
+// The name a format prints under: `Q16.16`, `UQ16.16`, `Q1.15`.
+//
+// What an error message and a register dump both want, and the reason
+// it takes the three numbers rather than a type: a caller using a
+// format this package does not ship gets the same spelling.
+//
+// ```novo
+// use fixedpoint
+//
+// fn main() [io]
+//     println(fixedpoint.format_name(16, 32, true))   // Q16.16
+// ```
+pub fn format_name(frac_bits: Int, total_bits: Int, signed: Bool) -> Str
+    todo("fixedpoint.format_name")

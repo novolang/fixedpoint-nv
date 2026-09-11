@@ -1,0 +1,134 @@
+// tests/embedded_probe.nv — the package's device claim, as a program
+// that either builds for a Cortex-M or does not.
+//
+// The shard audit's `core-embedded` row copies this and the modules its
+// `use` lines reach into a package of its own and runs
+//
+//   novo build --target=nrf52-qemu src/probe.nv
+//
+// which produces a real Cortex-M4 ELF or fails.  For this package the
+// claim IS the package: `@tier(embedded)` refuses `math.sqrt`,
+// `math.sin`, `math.exp`, `math.floor` and a dozen more because each
+// expands to a libm call on a soft-float freestanding target, and
+// everything here is `+`, `-`, `*`, `/`, comparisons and the two casts
+// between `Int` and `Float` — which the tier admits.  If this probe
+// stopped building there would be nothing left to offer.
+//
+// It BUILDS; it does not run.  Every function it calls is a `todo()`
+// today, so a device that executed this would panic on the first line
+// of `main`.  What is being checked is the tier: `--target=nrf52-qemu`
+// stamps `@tier(embedded)` on every function it compiles, so the
+// checker walks the module and refuses a `Str` concatenation, a list
+// literal, an unbounded `while` or a libm-bound intrinsic wherever the
+// implementation later puts one.
+//
+// `fixedpoint` IS NOT USED HERE, and that is the split rather than a
+// convenience: that module speaks `Str`, the embedded runtime defines
+// no `novo_str_*` symbol, and one host-only function anywhere in a
+// compilation unit is an undefined symbol at embedded link time whether
+// or not the firmware calls it.
+
+use fxq16_16
+use fxq1_15
+use fxq8_24
+use fxuq16_16
+use fxmath
+
+fn main() [hw]
+    // ── Q16.16, the hub: a PID step, which is what this format is for.
+    //
+    // Each step is bound with its type written out because a call into
+    // another module does not have its return type inferred in a
+    // single-file build.  Inside a package built as one unit — which is
+    // what every host suite does — none of these annotations is needed.
+    let kp: FxQ16_16 = fxq16_16.from_ratio(3, 500)
+    let setpoint: FxQ16_16 = fxq16_16.from_int(20)
+    let reading: FxQ16_16 = fxq16_16.from_raw(1376256)
+    let err: FxQ16_16 = fxq16_16.sub(setpoint, reading)
+    var accum: FxQ16_16 = fxq16_16.zero()
+    accum = fxq16_16.sat_add(accum, fxq16_16.mul(kp, err))
+    let out: FxQ16_16 = fxq16_16.sat_div(accum, fxq16_16.one())
+    if fxq16_16.compare(out, fxq16_16.max_value()) < 0
+        hal.uart.write(".")
+
+    let a: FxQ16_16 = fxq16_16.add(fxq16_16.one(), fxq16_16.epsilon())
+    let b: FxQ16_16 = fxq16_16.div(a, fxq16_16.from_int(2))
+    let c: FxQ16_16 = fxq16_16.neg(fxq16_16.abs(b))
+    let d: FxQ16_16 = fxq16_16.sat_sub(fxq16_16.min_value(), fxq16_16.one())
+    let e: FxQ16_16 = fxq16_16.sat_mul(c, d)
+    let f: FxQ16_16 = fxq16_16.wrap_mul(fxq16_16.wrap_sub(fxq16_16.wrap_add(a, b), c), d)
+    let g: FxQ16_16 = fxq16_16.frac(fxq16_16.round(fxq16_16.ceil(fxq16_16.floor(f))))
+    let n16 = fxq16_16.to_int(g) + fxq16_16.raw(e) + fxq16_16.frac_bits()
+    let fl16 = fxq16_16.to_float(fxq16_16.from_float(0.5))
+
+    // ── Q1.15: the filter tap, where saturating multiply is the point.
+    let tap: FxQ1_15 = fxq1_15.from_float(0.5)
+    let sample: FxQ1_15 = fxq1_15.from_raw(16384)
+    var acc15: FxQ1_15 = fxq1_15.zero()
+    for _i in 0..8
+        acc15 = fxq1_15.sat_add(acc15, fxq1_15.sat_mul(tap, sample))
+    let p15: FxQ1_15 = fxq1_15.mul(tap, sample)
+    let q15: FxQ1_15 = fxq1_15.wrap_mul(fxq1_15.wrap_sub(fxq1_15.wrap_add(p15, tap), sample), tap)
+    let r15: FxQ1_15 = fxq1_15.frac(fxq1_15.floor(fxq1_15.abs(fxq1_15.neg(q15))))
+    let s15: FxQ1_15 = fxq1_15.sat_div(fxq1_15.sub(fxq1_15.add(r15, tap), sample), fxq1_15.one())
+    let t15: FxQ1_15 = fxq1_15.sat_sub(fxq1_15.from_int(0), fxq1_15.from_ratio(1, 4))
+    let n15 = fxq1_15.to_int(t15) + fxq1_15.raw(s15) + fxq1_15.compare(tap, sample) + fxq1_15.frac_bits()
+    let fl15 = fxq1_15.to_float(fxq1_15.min_value()) + fxq1_15.to_float(fxq1_15.max_value())
+    let e15: FxQ1_15 = fxq1_15.epsilon()
+    // The two conversions that cross to the hub, exact one way and
+    // rounded the other.
+    let wide: FxQ16_16 = fxq1_15.to_q16_16(e15)
+    let back: FxQ1_15 = fxq1_15.from_q16_16(wide)
+    // `ceil` and `round` on a positive Q1.15 trap, so the probe drives
+    // them on a value whose answer is representable.
+    let c15: FxQ1_15 = fxq1_15.round(fxq1_15.ceil(fxq1_15.from_float(-0.25)))
+
+    // ── Q8.24: the same, at the precision a tight loop needs.
+    let kp24: FxQ8_24 = fxq8_24.from_ratio(3, 500)
+    let e24: FxQ8_24 = fxq8_24.sub(fxq8_24.from_int(20), fxq8_24.from_raw(335544320))
+    let o24: FxQ8_24 = fxq8_24.sat_add(fxq8_24.zero(), fxq8_24.mul(kp24, e24))
+    let p24: FxQ8_24 = fxq8_24.sat_mul(fxq8_24.sat_sub(o24, fxq8_24.one()), fxq8_24.epsilon())
+    let q24: FxQ8_24 = fxq8_24.wrap_mul(fxq8_24.wrap_sub(fxq8_24.wrap_add(p24, o24), e24), kp24)
+    let r24: FxQ8_24 = fxq8_24.frac(fxq8_24.round(fxq8_24.ceil(fxq8_24.floor(q24))))
+    let s24: FxQ8_24 = fxq8_24.sat_div(fxq8_24.div(fxq8_24.add(r24, fxq8_24.one()), fxq8_24.from_int(2)), fxq8_24.one())
+    let t24: FxQ8_24 = fxq8_24.neg(fxq8_24.abs(s24))
+    let u24: FxQ8_24 = fxq8_24.from_q16_16(fxq8_24.to_q16_16(t24))
+    let n24 = fxq8_24.to_int(u24) + fxq8_24.raw(fxq8_24.min_value()) + fxq8_24.raw(fxq8_24.max_value()) + fxq8_24.compare(t24, s24) + fxq8_24.frac_bits()
+    let fl24 = fxq8_24.to_float(fxq8_24.from_float(0.5))
+
+    // ── UQ16.16: the unsigned half, whose multiply needs a u64
+    // intermediate and whose subtraction is the reason it ships.
+    let dutyv: FxUQ16_16 = fxuq16_16.from_ratio(3, 4)
+    let stepv: FxUQ16_16 = fxuq16_16.from_ratio(1, 100)
+    var duty: FxUQ16_16 = dutyv
+    for _i in 0..16
+        duty = fxuq16_16.sat_sub(duty, stepv)
+    let mu: FxUQ16_16 = fxuq16_16.mul(duty, fxuq16_16.one())
+    let du: FxUQ16_16 = fxuq16_16.div(fxuq16_16.add(mu, fxuq16_16.epsilon()), fxuq16_16.from_int(2))
+    let wu: FxUQ16_16 = fxuq16_16.wrap_mul(fxuq16_16.wrap_sub(fxuq16_16.wrap_add(du, mu), stepv), dutyv)
+    let ru: FxUQ16_16 = fxuq16_16.frac(fxuq16_16.round(fxuq16_16.ceil(fxuq16_16.floor(wu))))
+    let su: FxUQ16_16 = fxuq16_16.sat_div(fxuq16_16.sat_mul(fxuq16_16.sat_add(ru, stepv), dutyv), fxuq16_16.one())
+    let vu: FxUQ16_16 = fxuq16_16.sub(fxuq16_16.max_value(), su)
+    let xu: FxUQ16_16 = fxuq16_16.from_q16_16(fxuq16_16.to_q16_16(vu))
+    let nu = fxuq16_16.to_int(xu) + fxuq16_16.raw(fxuq16_16.min_value()) + fxuq16_16.raw(fxuq16_16.zero()) + fxuq16_16.compare(vu, su) + fxuq16_16.frac_bits()
+    let flu = fxuq16_16.to_float(fxuq16_16.from_float(0.5))
+
+    // ── The float approximations, which are the other half of the
+    // claim: a device computing a heading from two magnetometer axes
+    // calls `atan2`, and `math.atan2` is refused at this tier.
+    let heading = fxmath.atan2(1.0, 1.0)
+    let norm = fxmath.invsqrt(fxmath.sqrt(2.0))
+    let wave = fxmath.sin(heading) + fxmath.cos(heading) + fxmath.tan(0.5)
+    let ang = fxmath.atan(norm)
+    let growth = fxmath.exp(fxmath.ln(fxmath.log2(8.0)))
+    let raised = fxmath.powf(2.0, 0.5) + fxmath.powi(-2.0, 3)
+    let whole = fxmath.floor(wave) + fxmath.ceil(ang) + fxmath.round(growth) + fxmath.trunc(raised) + fxmath.abs(-1.5)
+
+    // The reads force the arithmetic to be compiled rather than folded
+    // away; a real firmware would hand `out.raw` to a PWM register.
+    if whole > 0.0 and fl16 + fl15 + fl24 + flu > 0.0
+        hal.uart.write("+")
+    if n16 + n15 + n24 + nu >= 0 and fxq1_15.raw(c15) + fxq1_15.raw(back) + fxq1_15.raw(acc15) >= 0
+        hal.uart.write("-")
+
+    hal.uart.write("fixedpoint-nv: no FPU, no libm\n")

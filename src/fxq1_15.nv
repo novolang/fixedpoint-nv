@@ -1,0 +1,256 @@
+// fxq1_15 — Q1.15, the signal-processing format: one integer bit,
+// fifteen fractional bits, in a 16-bit container.
+//
+// Every body is a `todo()`.  The signatures are the design, and the
+// compiler checks them as claims; see the README for the stamp.
+//
+// THE SAME THIRTY FUNCTIONS AS `fxq16_16`, at a different scale.  What
+// this header says is what DIFFERS; the semantics of each name — which
+// family traps, which clamps, which wraps, how `frac` treats a negative
+// number — are written out once in `fxq16_16` and are the same here.
+//
+// WHAT IT IS FOR.  The range is -1.0 up to 0.99997, and that is the
+// point rather than a limitation: the product of two numbers in
+// `[-1, 1)` is in `[-1, 1]`, so a chain of multiplies does not grow.
+// Every FIR filter, every audio sample, every normalised sensor axis
+// and every sine table is this format, and it is why a DSP's multiplier
+// is built around it.  The step is 2^-15, about 0.0000305.
+//
+// THE ONE OVERFLOW THAT MATTERS.  -1.0 × -1.0 is +1.0, which this
+// format cannot hold — it is the single product of two in-range values
+// that leaves the range.  `mul` traps on it, `sat_mul` answers
+// `max_value` (0.99997), and that saturation is what every DSP does in
+// hardware.  A filter written with `mul` will find the one input that
+// hits it; a filter written with `sat_mul` will not.
+//
+// THE CONTAINER IS 16 BITS, so `raw` is -32768 ..= 32767 and a value
+// goes out over a wire, into an I2S frame or into a DAC as two bytes.
+// The wide intermediate for `mul` is 32 bits and fits an `Int` with
+// room to spare.
+
+// A Q1.15 number: one integer bit and fifteen fractional bits.
+//
+// A `@value` struct — one integer in the caller's frame.  A filter with
+// a sixty-four-tap delay line holds the taps as an array of these in a
+// `@value` struct of its own and allocates nothing.
+pub @value
+struct FxQ1_15
+    raw: Int
+
+// Zero.
+pub fn zero() -> FxQ1_15
+    todo("fxq1_15.zero")
+
+// One — which this format cannot represent exactly.
+//
+// Answers `max_value`, 0.99997, and that is the format's defining
+// compromise rather than a rounding error: one integer bit spends
+// itself on the sign, so the positive end stops one step short.  A
+// filter coefficient of exactly 1.0 is the coefficient to rescale, not
+// to round.
+pub fn one() -> FxQ1_15
+    todo("fxq1_15.one")
+
+// -1.0 — `raw` is -32768, and the one value whose negation is not
+// representable.
+pub fn min_value() -> FxQ1_15
+    todo("fxq1_15.min_value")
+
+// 0.999969… — `raw` is 32767.
+pub fn max_value() -> FxQ1_15
+    todo("fxq1_15.max_value")
+
+// The smallest step: `raw` is 1, which is 2^-15.
+pub fn epsilon() -> FxQ1_15
+    todo("fxq1_15.epsilon")
+
+// How many fractional bits this format has: 15.
+pub fn frac_bits() -> Int
+    todo("fxq1_15.frac_bits")
+
+// ── Construction ────────────────────────────────────────────────────
+
+// The number whose stored integer is `raw`, clamped to the 16-bit
+// container.
+//
+// The constructor for a sample that arrived as two bytes, which is what
+// an I2S frame and a 16-bit ADC both produce.
+//
+// ```novo
+// use fxq1_15
+//
+// fn main() [io]
+//     println("${fxq1_15.from_raw(16384).raw}")   // 16384 — a half
+// ```
+pub fn from_raw(raw: Int) -> FxQ1_15
+    todo("fxq1_15.from_raw")
+
+// The stored integer, -32768 ..= 32767.
+pub fn raw(x: FxQ1_15) -> Int
+    todo("fxq1_15.raw")
+
+// `n` as a Q1.15.
+//
+// Only -1 and 0 are representable; anything else saturates.  The
+// function is here for symmetry with the other three formats and
+// because `from_int(0)` reads better than `zero()` in a loop that takes
+// its starting value from a table.
+pub fn from_int(n: Int) -> FxQ1_15
+    todo("fxq1_15.from_int")
+
+// `f` as a Q1.15, rounded, saturating outside `[-1, 1)`.
+//
+// The conversion a host makes once, turning a filter's designed
+// coefficients into the integers the firmware ships.
+//
+// ```novo
+// use fxq1_15
+//
+// fn main() [io]
+//     println("${fxq1_15.from_float(0.5).raw}")   // 16384
+// ```
+pub fn from_float(f: Float) -> FxQ1_15
+    todo("fxq1_15.from_float")
+
+// `num / den` as a Q1.15, rounded, with no float anywhere.
+pub fn from_ratio(num: Int, den: Int) -> FxQ1_15
+    todo("fxq1_15.from_ratio")
+
+// ── Conversion out ──────────────────────────────────────────────────
+
+// The integer part, truncated toward zero — 0 or -1.
+pub fn to_int(x: FxQ1_15) -> Int
+    todo("fxq1_15.to_int")
+
+// The number as a `Float`.  Exact.
+pub fn to_float(x: FxQ1_15) -> Float
+    todo("fxq1_15.to_float")
+
+// The same number as a Q16.16.
+//
+// Widening, so it is exact and cannot fail: shift the raw value left by
+// one.  The hub format is where a value goes when it has to be added to
+// something larger than itself — an accumulator over a hundred taps,
+// for instance.
+//
+// ```novo
+// use fxq1_15
+//
+// fn main() [io]
+//     println("${fxq1_15.to_q16_16(fxq1_15.from_float(0.5)).raw}")   // 32768
+// ```
+pub fn to_q16_16(x: FxQ1_15) -> FxQ16_16
+    todo("fxq1_15.to_q16_16")
+
+// A Q16.16 as a Q1.15, rounded and saturated.
+//
+// Narrowing, so it can lose both range and precision: anything at or
+// past 1.0 clamps to `max_value`, and the sixteenth fractional bit is
+// rounded away.  The direction an accumulator takes when its result
+// goes back out as a sample.
+pub fn from_q16_16(x: FxQ16_16) -> FxQ1_15
+    todo("fxq1_15.from_q16_16")
+
+// ── Arithmetic that traps on overflow ───────────────────────────────
+
+// `a + b`.  Traps on overflow, which in this format is easy to reach:
+// 0.6 + 0.6 is not representable.
+pub fn add(a: FxQ1_15, b: FxQ1_15) -> FxQ1_15
+    todo("fxq1_15.add")
+
+// `a - b`.  Traps on overflow.
+pub fn sub(a: FxQ1_15, b: FxQ1_15) -> FxQ1_15
+    todo("fxq1_15.sub")
+
+// `a * b`, with the 32-bit intermediate.
+//
+// `(a.raw * b.raw) >> 15`.  In range for every pair except -1.0 × -1.0,
+// which is +1.0 and traps — see the header.  This is the operation the
+// format exists for: a product of two numbers in `[-1, 1)` does not
+// grow, so a filter's taps can be multiplied and summed without a
+// rescale between them.
+//
+// ```novo
+// use fxq1_15
+//
+// fn main() [io]
+//     let half = fxq1_15.from_float(0.5)
+//     println("${fxq1_15.mul(half, half).raw}")   // 8192 — a quarter
+// ```
+pub fn mul(a: FxQ1_15, b: FxQ1_15) -> FxQ1_15
+    todo("fxq1_15.mul")
+
+// `a / b`.  Traps when the quotient leaves `[-1, 1)`, which is whenever
+// `|a| >= |b|`.  A `b` of zero saturates by the sign of `a`.
+pub fn div(a: FxQ1_15, b: FxQ1_15) -> FxQ1_15
+    todo("fxq1_15.div")
+
+// `-x`.  Traps on `min_value`, the one value with no counterpart.
+pub fn neg(x: FxQ1_15) -> FxQ1_15
+    todo("fxq1_15.neg")
+
+// `|x|`.  Traps on `min_value`.
+pub fn abs(x: FxQ1_15) -> FxQ1_15
+    todo("fxq1_15.abs")
+
+// ── Saturating: clamp to the end of the range ───────────────────────
+
+// `a + b`, clamped.  What a mixer wants: two loud samples summed are
+// clipped, which is audible, rather than wrapped, which is a click.
+pub fn sat_add(a: FxQ1_15, b: FxQ1_15) -> FxQ1_15
+    todo("fxq1_15.sat_add")
+
+// `a - b`, clamped.
+pub fn sat_sub(a: FxQ1_15, b: FxQ1_15) -> FxQ1_15
+    todo("fxq1_15.sat_sub")
+
+// `a * b`, clamped — so -1.0 × -1.0 answers `max_value`.
+//
+// The multiply a filter should use, and what a DSP's hardware
+// multiplier does in this format.
+pub fn sat_mul(a: FxQ1_15, b: FxQ1_15) -> FxQ1_15
+    todo("fxq1_15.sat_mul")
+
+// `a / b`, clamped.
+pub fn sat_div(a: FxQ1_15, b: FxQ1_15) -> FxQ1_15
+    todo("fxq1_15.sat_div")
+
+// ── Wrapping: round the container ───────────────────────────────────
+
+// `a + b`, wrapped round the 16-bit container.
+pub fn wrap_add(a: FxQ1_15, b: FxQ1_15) -> FxQ1_15
+    todo("fxq1_15.wrap_add")
+
+// `a - b`, wrapped.
+pub fn wrap_sub(a: FxQ1_15, b: FxQ1_15) -> FxQ1_15
+    todo("fxq1_15.wrap_sub")
+
+// `a * b`, wrapped.
+pub fn wrap_mul(a: FxQ1_15, b: FxQ1_15) -> FxQ1_15
+    todo("fxq1_15.wrap_mul")
+
+// ── Rounding to whole numbers ───────────────────────────────────────
+
+// The largest whole number no greater than `x`: 0.0 or -1.0.
+pub fn floor(x: FxQ1_15) -> FxQ1_15
+    todo("fxq1_15.floor")
+
+// The smallest whole number no less than `x`.  Traps for a positive
+// `x`, whose ceiling is 1.0 and not representable.
+pub fn ceil(x: FxQ1_15) -> FxQ1_15
+    todo("fxq1_15.ceil")
+
+// `x` rounded to the nearest whole number, halves away from zero.
+// Traps for `x >= 0.5`, whose rounding is 1.0.
+pub fn round(x: FxQ1_15) -> FxQ1_15
+    todo("fxq1_15.round")
+
+// The fractional part, in `[0, 1)`.
+pub fn frac(x: FxQ1_15) -> FxQ1_15
+    todo("fxq1_15.frac")
+
+// ── Comparison ──────────────────────────────────────────────────────
+
+// -1 when `a < b`, 0 when equal, 1 when `a > b`.
+pub fn compare(a: FxQ1_15, b: FxQ1_15) -> Int
+    todo("fxq1_15.compare")

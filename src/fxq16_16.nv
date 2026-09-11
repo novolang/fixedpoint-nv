@@ -1,0 +1,323 @@
+// fxq16_16 — Q16.16, the general-purpose fixed-point number: sixteen
+// integer bits, sixteen fractional bits, in a 32-bit container.
+//
+// Every body is a `todo()`.  The signatures are the design, and the
+// compiler checks them as claims; see the README for the stamp.
+//
+// THIS IS THE HUB.  Four Q formats ship, this is the one to reach for
+// when nothing says otherwise, and it is where the worked examples are.
+// The other three say what differs rather than repeating this.
+//
+// WHAT THE NUMBERS ARE.  `raw` is the value multiplied by 65536 and
+// truncated, held as a 32-bit two's-complement integer inside an `Int`:
+// 1.0 is 65536, 0.5 is 32768, -1.0 is -65536.  The range is
+// -32768.0 up to 32767.99998, and the step between two representable
+// numbers is 2^-16, about 0.0000153.  That step is CONSTANT — which is
+// the whole difference from a float, where the step near 1000 is a
+// thousand times the step near 1.
+//
+// THE INVARIANT.  `raw` is always inside the container: every
+// constructor and every operation lands it in
+// -2147483648 ..= 2147483647, so a caller may read the field directly
+// and hand it to a peripheral that wants a 32-bit word.
+//
+// WHY THE MULTIPLY NEEDS A WIDE INTERMEDIATE.  `a.raw * b.raw` is the
+// product of two 32-bit numbers and needs 64 bits before it is shifted
+// back down by 16.  `Int` IS 64 bits, so that intermediate is free
+// here — no emulation, one `mul` and one `ashr` on a Cortex-M4.  It is
+// also why the shipped set stops at 32-bit containers: a Q32.32 would
+// need a 128-bit intermediate, and the language has no type for one.
+//
+// THREE FAMILIES OF ARITHMETIC, and the choice is the caller's:
+// the plain ones TRAP on overflow (SPEC § 13.2), the `sat_` ones clamp
+// to the end of the range, and the `wrap_` ones wrap round.  A control
+// loop wants `sat_`; a phase accumulator wants `wrap_`; anything else
+// wants the plain one, because an overflow there is a bug and a trap
+// says so at the line it happened.
+
+// A Q16.16 number: sixteen integer bits and sixteen fractional bits.
+//
+// A `@value` struct, so it lives in the caller's stack frame with no
+// header, no reference count and no allocation.  A PID loop that keeps
+// three of these keeps twenty-four bytes of its own frame.
+pub @value
+struct FxQ16_16
+    raw: Int
+
+// Zero.
+pub fn zero() -> FxQ16_16
+    todo("fxq16_16.zero")
+
+// One — `raw` is 65536.
+//
+// ```novo
+// use fxq16_16
+//
+// fn main() [io]
+//     println("${fxq16_16.one().raw}")   // 65536
+// ```
+pub fn one() -> FxQ16_16
+    todo("fxq16_16.one")
+
+// The most negative representable number, -32768.0.
+pub fn min_value() -> FxQ16_16
+    todo("fxq16_16.min_value")
+
+// The largest representable number, 32767.9999847…
+pub fn max_value() -> FxQ16_16
+    todo("fxq16_16.max_value")
+
+// The smallest step between two representable numbers: `raw` is 1,
+// which is 2^-16.
+//
+// The number a convergence test compares against, and the reason a
+// fixed-point loop terminates where a float one oscillates: the step is
+// the same at 30000.0 as it is at 0.001.
+pub fn epsilon() -> FxQ16_16
+    todo("fxq16_16.epsilon")
+
+// How many fractional bits this format has: 16.
+//
+// What `fixedpoint.format_raw` and `fixedpoint.parse_raw` are given,
+// and what a caller converting between formats shifts by.
+pub fn frac_bits() -> Int
+    todo("fxq16_16.frac_bits")
+
+// ── Construction ────────────────────────────────────────────────────
+
+// The number whose stored integer is `raw`.
+//
+// The constructor for a value that came off a peripheral or out of a
+// table: an accelerometer that reports Q16.16 has already done the
+// scaling.  `raw` outside the 32-bit container is CLAMPED, because a
+// `@value` function has nowhere to put a refusal and a clamped reading
+// is closer to the truth than a wrapped one.
+pub fn from_raw(raw: Int) -> FxQ16_16
+    todo("fxq16_16.from_raw")
+
+// The stored integer.
+//
+// `from_raw(raw(x))` is `x`, which is what makes this the wire format:
+// a sensor batch is a list of these and nothing is lost sending it.
+pub fn raw(x: FxQ16_16) -> Int
+    todo("fxq16_16.raw")
+
+// `n` as a Q16.16, exactly.
+//
+// Saturates outside -32768 ..= 32767, which is the whole integer range
+// this format holds.
+//
+// ```novo
+// use fxq16_16
+//
+// fn main() [io]
+//     println("${fxq16_16.from_int(3).raw}")   // 196608
+// ```
+pub fn from_int(n: Int) -> FxQ16_16
+    todo("fxq16_16.from_int")
+
+// `f` as a Q16.16, rounded to the nearest representable number.
+//
+// The conversion a host makes ONCE, at the boundary, so the device
+// never sees a float: a configuration file says `0.15`, the host turns
+// it into `9830`, and the firmware does integer arithmetic for the rest
+// of its life.  Saturates outside the range; a `NaN` becomes zero,
+// because a `NaN` in a control loop is a stuck actuator and a zero is a
+// visible one.
+//
+// ```novo
+// use fxq16_16
+//
+// fn main() [io]
+//     println("${fxq16_16.from_float(0.5).raw}")   // 32768
+// ```
+pub fn from_float(f: Float) -> FxQ16_16
+    todo("fxq16_16.from_float")
+
+// `num / den` as a Q16.16, rounded, with no float anywhere.
+//
+// How a device builds a constant it was given as a ratio — a divider, a
+// calibration slope, a third — without linking the float routines this
+// package exists to avoid.  `den` of zero saturates to `max_value` or
+// `min_value` by the sign of `num`.
+//
+// ```novo
+// use fxq16_16
+//
+// fn main() [io]
+//     println("${fxq16_16.from_ratio(1, 3).raw}")   // 21845
+// ```
+pub fn from_ratio(num: Int, den: Int) -> FxQ16_16
+    todo("fxq16_16.from_ratio")
+
+// ── Conversion out ──────────────────────────────────────────────────
+
+// The integer part, truncated toward zero.
+//
+// `to_int(from_float(-1.5))` is -1, not -2 — `floor` is the other one,
+// and the two differ on every negative number with a fraction, which is
+// where a sign bug in a control loop comes from.
+pub fn to_int(x: FxQ16_16) -> Int
+    todo("fxq16_16.to_int")
+
+// The number as a `Float`.
+//
+// Exact: every Q16.16 value has an exact `Float`, because 32 bits of
+// mantissa fit in 53.  For a host reading a device's numbers back, or a
+// test comparing against a reference.  A device does not call this —
+// that is what the package is for.
+pub fn to_float(x: FxQ16_16) -> Float
+    todo("fxq16_16.to_float")
+
+// ── Arithmetic that traps on overflow ───────────────────────────────
+
+// `a + b`.
+//
+// Traps on overflow (SPEC § 13.2), which is the right default: an
+// overflow in a sum that was supposed to stay in range is a bug, and a
+// trap names the line.
+//
+// ```novo
+// use fxq16_16
+//
+// fn main() [io]
+//     let sum = fxq16_16.add(fxq16_16.one(), fxq16_16.from_float(0.5))
+//     println("${sum.raw}")   // 98304
+// ```
+pub fn add(a: FxQ16_16, b: FxQ16_16) -> FxQ16_16
+    todo("fxq16_16.add")
+
+// `a - b`.  Traps on overflow.
+pub fn sub(a: FxQ16_16, b: FxQ16_16) -> FxQ16_16
+    todo("fxq16_16.sub")
+
+// `a * b`, with the 64-bit intermediate.
+//
+// `(a.raw * b.raw) >> 16`, rounded toward zero, and the shift is what
+// makes it a Q16.16 again: two numbers each scaled by 65536 multiply to
+// something scaled by 65536², so one factor has to come back out.
+// Traps when the product leaves the container.
+//
+// ```novo
+// use fxq16_16
+//
+// fn main() [io]
+//     let half = fxq16_16.from_float(0.5)
+//     println("${fxq16_16.mul(half, half).raw}")   // 16384 — a quarter
+// ```
+pub fn mul(a: FxQ16_16, b: FxQ16_16) -> FxQ16_16
+    todo("fxq16_16.mul")
+
+// `a / b`, with the 64-bit intermediate.
+//
+// `(a.raw << 16) / b.raw`, truncated toward zero.  The shift goes in
+// first so the quotient keeps its fractional bits, which is the
+// mirror of what `mul` shifts out.  A `b` of zero saturates by the sign
+// of `a` rather than trapping — a divide by zero in a control loop is
+// the sensor having gone quiet, and a clamped output is recoverable
+// where a trap is not.
+pub fn div(a: FxQ16_16, b: FxQ16_16) -> FxQ16_16
+    todo("fxq16_16.div")
+
+// `-x`.  Traps on `min_value`, which has no positive counterpart.
+pub fn neg(x: FxQ16_16) -> FxQ16_16
+    todo("fxq16_16.neg")
+
+// `|x|`.  Traps on `min_value`, for the same reason as `neg`.
+pub fn abs(x: FxQ16_16) -> FxQ16_16
+    todo("fxq16_16.abs")
+
+// ── Saturating: clamp to the end of the range ───────────────────────
+
+// `a + b`, clamped to `min_value` and `max_value`.
+//
+// What a control loop's integrator wants: an actuator that is already
+// at full travel stays at full travel, and the next sample brings it
+// back rather than finding a wrapped value on the far end.
+//
+// ```novo
+// use fxq16_16
+//
+// fn main() [io]
+//     let hi = fxq16_16.max_value()
+//     println("${fxq16_16.sat_add(hi, fxq16_16.one()).raw == hi.raw}")   // true
+// ```
+pub fn sat_add(a: FxQ16_16, b: FxQ16_16) -> FxQ16_16
+    todo("fxq16_16.sat_add")
+
+// `a - b`, clamped.
+pub fn sat_sub(a: FxQ16_16, b: FxQ16_16) -> FxQ16_16
+    todo("fxq16_16.sat_sub")
+
+// `a * b`, clamped.
+pub fn sat_mul(a: FxQ16_16, b: FxQ16_16) -> FxQ16_16
+    todo("fxq16_16.sat_mul")
+
+// `a / b`, clamped.  A `b` of zero clamps by the sign of `a`, which is
+// what `div` already does.
+pub fn sat_div(a: FxQ16_16, b: FxQ16_16) -> FxQ16_16
+    todo("fxq16_16.sat_div")
+
+// ── Wrapping: round the container ───────────────────────────────────
+
+// `a + b`, wrapped round the 32-bit container.
+//
+// The family a phase accumulator wants and nothing else does: an
+// oscillator's phase IS modular, and wrapping is the arithmetic rather
+// than the accident.  Everywhere else this hides a bug that `add` would
+// have named.
+pub fn wrap_add(a: FxQ16_16, b: FxQ16_16) -> FxQ16_16
+    todo("fxq16_16.wrap_add")
+
+// `a - b`, wrapped.
+pub fn wrap_sub(a: FxQ16_16, b: FxQ16_16) -> FxQ16_16
+    todo("fxq16_16.wrap_sub")
+
+// `a * b`, wrapped.
+pub fn wrap_mul(a: FxQ16_16, b: FxQ16_16) -> FxQ16_16
+    todo("fxq16_16.wrap_mul")
+
+// ── Rounding to whole numbers ───────────────────────────────────────
+
+// The largest whole number no greater than `x`, as a Q16.16.
+//
+// Toward negative infinity, so `floor(-1.5)` is -2.0 where
+// `to_int(-1.5)` is -1.
+pub fn floor(x: FxQ16_16) -> FxQ16_16
+    todo("fxq16_16.floor")
+
+// The smallest whole number no less than `x`, as a Q16.16.
+pub fn ceil(x: FxQ16_16) -> FxQ16_16
+    todo("fxq16_16.ceil")
+
+// `x` rounded to the nearest whole number, halves away from zero.
+//
+// Away from zero rather than to even, because the consumers are
+// converting a measurement to a count and a bias toward even is a bias.
+pub fn round(x: FxQ16_16) -> FxQ16_16
+    todo("fxq16_16.round")
+
+// The fractional part: `x - floor(x)`, always in `[0, 1)`.
+//
+// Non-negative even for a negative `x`, which is what makes
+// `floor(x) + frac(x) == x` hold everywhere — an interpolation weight
+// taken off a negative index is right for the same reason.
+//
+// ```novo
+// use fxq16_16
+//
+// fn main() [io]
+//     println("${fxq16_16.frac(fxq16_16.from_float(-1.25)).raw}")   // 49152 — 0.75
+// ```
+pub fn frac(x: FxQ16_16) -> FxQ16_16
+    todo("fxq16_16.frac")
+
+// ── Comparison ──────────────────────────────────────────────────────
+
+// -1 when `a < b`, 0 when equal, 1 when `a > b`.
+//
+// An `Int` rather than an ordering enum because a `@value` module
+// answers integers, and because this is what a sort comparator and a
+// clamp both already want.
+pub fn compare(a: FxQ16_16, b: FxQ16_16) -> Int
+    todo("fxq16_16.compare")

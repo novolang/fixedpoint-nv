@@ -1,0 +1,235 @@
+// fxq8_24 — Q8.24, the control-loop format: eight integer bits,
+// twenty-four fractional bits, in a 32-bit container.
+//
+// Every body is a `todo()`.  The signatures are the design, and the
+// compiler checks them as claims; see the README for the stamp.
+//
+// THE SAME THIRTY FUNCTIONS AS `fxq16_16`, at a different scale.  What
+// this header says is what DIFFERS; the semantics of each name are
+// written out once in `fxq16_16` and are the same here.
+//
+// WHAT IT IS FOR.  The range is -128.0 up to 127.99999994 and the step
+// is 2^-24, about 0.00000006.  That is a tenth of a degree at three
+// significant figures and a thousandth of a percent of a duty cycle,
+// which is the trade a control loop wants: the error term of a PID is
+// small and the gain is large, and the format that holds a small number
+// precisely beats the one that holds a large number approximately.
+// Q16.16's step of 0.0000153 is ENOUGH in almost every loop; this is
+// the format for the one where it is not.
+//
+// WHERE IT BREAKS.  The integer range is ±128, so a value that leaves
+// it has left it badly — an integrator that reaches 128 in a loop scaled
+// to ±1 has already told you something.  `sat_` is therefore the family
+// to use for the accumulator and the plain one for everything else.
+//
+// THE WIDE INTERMEDIATE is the same 64-bit `Int` that `fxq16_16` uses;
+// only the shift changes, from 16 to 24.
+
+// A Q8.24 number: eight integer bits and twenty-four fractional bits.
+//
+// A `@value` struct — one integer in the caller's frame.
+pub @value
+struct FxQ8_24
+    raw: Int
+
+// Zero.
+pub fn zero() -> FxQ8_24
+    todo("fxq8_24.zero")
+
+// One — `raw` is 16777216.
+//
+// ```novo
+// use fxq8_24
+//
+// fn main() [io]
+//     println("${fxq8_24.one().raw}")   // 16777216
+// ```
+pub fn one() -> FxQ8_24
+    todo("fxq8_24.one")
+
+// -128.0 — `raw` is -2147483648.
+pub fn min_value() -> FxQ8_24
+    todo("fxq8_24.min_value")
+
+// 127.99999994 — `raw` is 2147483647.
+pub fn max_value() -> FxQ8_24
+    todo("fxq8_24.max_value")
+
+// The smallest step: `raw` is 1, which is 2^-24.
+//
+// About 0.00000006, and the number that decides whether this format or
+// the hub is the right one for a loop.
+pub fn epsilon() -> FxQ8_24
+    todo("fxq8_24.epsilon")
+
+// How many fractional bits this format has: 24.
+pub fn frac_bits() -> Int
+    todo("fxq8_24.frac_bits")
+
+// ── Construction ────────────────────────────────────────────────────
+
+// The number whose stored integer is `raw`, clamped to the 32-bit
+// container.
+pub fn from_raw(raw: Int) -> FxQ8_24
+    todo("fxq8_24.from_raw")
+
+// The stored integer.
+pub fn raw(x: FxQ8_24) -> Int
+    todo("fxq8_24.raw")
+
+// `n` as a Q8.24, saturating outside -128 ..= 127.
+pub fn from_int(n: Int) -> FxQ8_24
+    todo("fxq8_24.from_int")
+
+// `f` as a Q8.24, rounded, saturating outside the range.
+//
+// ```novo
+// use fxq8_24
+//
+// fn main() [io]
+//     println("${fxq8_24.from_float(0.5).raw}")   // 8388608
+// ```
+pub fn from_float(f: Float) -> FxQ8_24
+    todo("fxq8_24.from_float")
+
+// `num / den` as a Q8.24, rounded, with no float anywhere.
+//
+// The constructor a gain constant comes through: a PID whose
+// proportional term is 3/500 says exactly that, and no configuration
+// file has to spell out `0.006`.
+pub fn from_ratio(num: Int, den: Int) -> FxQ8_24
+    todo("fxq8_24.from_ratio")
+
+// ── Conversion out ──────────────────────────────────────────────────
+
+// The integer part, truncated toward zero.
+pub fn to_int(x: FxQ8_24) -> Int
+    todo("fxq8_24.to_int")
+
+// The number as a `Float`.  Exact.
+pub fn to_float(x: FxQ8_24) -> Float
+    todo("fxq8_24.to_float")
+
+// The same number as a Q16.16, rounded.
+//
+// Narrowing in precision and widening in range: the eight fractional
+// bits past Q16.16's sixteen are rounded away, and nothing can
+// overflow because ±128 fits in ±32768.  What a loop does when its
+// output leaves the control code and joins something measured in whole
+// units.
+//
+// ```novo
+// use fxq8_24
+//
+// fn main() [io]
+//     println("${fxq8_24.to_q16_16(fxq8_24.from_float(0.5)).raw}")   // 32768
+// ```
+pub fn to_q16_16(x: FxQ8_24) -> FxQ16_16
+    todo("fxq8_24.to_q16_16")
+
+// A Q16.16 as a Q8.24, saturating outside ±128.
+//
+// Widening in precision and narrowing in range — the mirror of
+// `to_q16_16`, and the one that can lose something: a Q16.16 holding
+// 1000.0 clamps to `max_value`.
+pub fn from_q16_16(x: FxQ16_16) -> FxQ8_24
+    todo("fxq8_24.from_q16_16")
+
+// ── Arithmetic that traps on overflow ───────────────────────────────
+
+// `a + b`.  Traps on overflow.
+pub fn add(a: FxQ8_24, b: FxQ8_24) -> FxQ8_24
+    todo("fxq8_24.add")
+
+// `a - b`.  Traps on overflow.
+pub fn sub(a: FxQ8_24, b: FxQ8_24) -> FxQ8_24
+    todo("fxq8_24.sub")
+
+// `a * b`, with the 64-bit intermediate: `(a.raw * b.raw) >> 24`.
+//
+// ```novo
+// use fxq8_24
+//
+// fn main() [io]
+//     let half = fxq8_24.from_float(0.5)
+//     println("${fxq8_24.mul(half, half).raw}")   // 4194304 — a quarter
+// ```
+pub fn mul(a: FxQ8_24, b: FxQ8_24) -> FxQ8_24
+    todo("fxq8_24.mul")
+
+// `a / b`: `(a.raw << 24) / b.raw`.  A `b` of zero saturates by the
+// sign of `a`.
+//
+// The shift here is the one place this format is tighter than the hub:
+// `a.raw << 24` of a value near ±128 uses fifty-five of the `Int`'s
+// sixty-four bits, so the intermediate still fits — but a Q4.28 would
+// not, which is the other half of why the shipped set stops where it
+// does.
+pub fn div(a: FxQ8_24, b: FxQ8_24) -> FxQ8_24
+    todo("fxq8_24.div")
+
+// `-x`.  Traps on `min_value`.
+pub fn neg(x: FxQ8_24) -> FxQ8_24
+    todo("fxq8_24.neg")
+
+// `|x|`.  Traps on `min_value`.
+pub fn abs(x: FxQ8_24) -> FxQ8_24
+    todo("fxq8_24.abs")
+
+// ── Saturating: clamp to the end of the range ───────────────────────
+
+// `a + b`, clamped.  The family a PID's integrator uses, because an
+// integrator that wraps drives the actuator to the far stop.
+pub fn sat_add(a: FxQ8_24, b: FxQ8_24) -> FxQ8_24
+    todo("fxq8_24.sat_add")
+
+// `a - b`, clamped.
+pub fn sat_sub(a: FxQ8_24, b: FxQ8_24) -> FxQ8_24
+    todo("fxq8_24.sat_sub")
+
+// `a * b`, clamped.
+pub fn sat_mul(a: FxQ8_24, b: FxQ8_24) -> FxQ8_24
+    todo("fxq8_24.sat_mul")
+
+// `a / b`, clamped.
+pub fn sat_div(a: FxQ8_24, b: FxQ8_24) -> FxQ8_24
+    todo("fxq8_24.sat_div")
+
+// ── Wrapping: round the container ───────────────────────────────────
+
+// `a + b`, wrapped round the 32-bit container.
+pub fn wrap_add(a: FxQ8_24, b: FxQ8_24) -> FxQ8_24
+    todo("fxq8_24.wrap_add")
+
+// `a - b`, wrapped.
+pub fn wrap_sub(a: FxQ8_24, b: FxQ8_24) -> FxQ8_24
+    todo("fxq8_24.wrap_sub")
+
+// `a * b`, wrapped.
+pub fn wrap_mul(a: FxQ8_24, b: FxQ8_24) -> FxQ8_24
+    todo("fxq8_24.wrap_mul")
+
+// ── Rounding to whole numbers ───────────────────────────────────────
+
+// The largest whole number no greater than `x`, toward negative
+// infinity.
+pub fn floor(x: FxQ8_24) -> FxQ8_24
+    todo("fxq8_24.floor")
+
+// The smallest whole number no less than `x`.
+pub fn ceil(x: FxQ8_24) -> FxQ8_24
+    todo("fxq8_24.ceil")
+
+// `x` rounded to the nearest whole number, halves away from zero.
+pub fn round(x: FxQ8_24) -> FxQ8_24
+    todo("fxq8_24.round")
+
+// The fractional part, in `[0, 1)`.
+pub fn frac(x: FxQ8_24) -> FxQ8_24
+    todo("fxq8_24.frac")
+
+// ── Comparison ──────────────────────────────────────────────────────
+
+// -1 when `a < b`, 0 when equal, 1 when `a > b`.
+pub fn compare(a: FxQ8_24, b: FxQ8_24) -> Int
+    todo("fxq8_24.compare")

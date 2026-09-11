@@ -1,0 +1,192 @@
+// tests/fxmath_tests.nv — the error bounds, as assertions.
+//
+// They COMPILE today and they FAIL at run, with `not implemented:
+// fxmath.<fn>` from the `todo()` that is each body.  That is the
+// expected state of an interface release.
+//
+// THE BOUNDS ARE THE CONTRACT, and this file is where they are written
+// down in a form the compiler runs.  Each doc comment in
+// `src/fxmath.nv` states a bound over a domain; every one of them has
+// an assertion here with the same number in it, so a body that lands
+// and is worse than its documentation fails a test rather than
+// disappointing a consumer.  Widening one of these numbers is a
+// BREAKING change — a sensor filter that trusts `atan2` to 5e-3 radians
+// is relying on it — and tightening one is not.
+//
+// The reference values are the mathematical ones, to more digits than
+// the approximations can use: `sqrt(2)` is 1.4142135623730951,
+// `pi/4` is 0.7853981633974483, `ln(2)` is 0.6931471805599453.  Nothing
+// here calls `std.math`, because the point of the module is the cores
+// where `std.math` is refused.
+
+use std.test
+use fxmath
+
+// ── The two roots ───────────────────────────────────────────────────
+
+@test
+fn test_sqrt_is_within_a_relative_2e_3()
+    // Relative, so the bound is scaled by the answer at each point.
+    test.assert_approx(fxmath.sqrt(2.0), 1.4142135623730951, 0.0029)
+    test.assert_approx(fxmath.sqrt(1.0), 1.0, 0.002)
+    test.assert_approx(fxmath.sqrt(0.25), 0.5, 0.001)
+    test.assert_approx(fxmath.sqrt(10000.0), 100.0, 0.2)
+    test.assert_approx(fxmath.sqrt(1.0e-6), 0.001, 0.000002)
+
+@test
+fn test_sqrt_of_zero_is_zero_exactly()
+    test.assert_approx(fxmath.sqrt(0.0), 0.0, 0.0)
+
+@test
+fn test_invsqrt_is_within_a_relative_2e_3()
+    test.assert_approx(fxmath.invsqrt(1.0), 1.0, 0.002)
+    test.assert_approx(fxmath.invsqrt(4.0), 0.5, 0.001)
+    test.assert_approx(fxmath.invsqrt(2.0), 0.7071067811865476, 0.0015)
+    test.assert_approx(fxmath.invsqrt(100.0), 0.1, 0.0002)
+
+@test
+fn test_sqrt_times_invsqrt_is_the_argument_back()
+    // The pair a vector normalisation uses, and the round trip a
+    // consumer will actually perform.
+    test.assert_approx(fxmath.sqrt(7.0) * fxmath.invsqrt(7.0), 1.0, 0.004)
+
+// ── The three trigonometric functions ───────────────────────────────
+
+@test
+fn test_sin_is_within_an_absolute_3e_3()
+    test.assert_approx(fxmath.sin(0.0), 0.0, 0.003)
+    test.assert_approx(fxmath.sin(0.5235987755982988), 0.5, 0.003)
+    test.assert_approx(fxmath.sin(0.7853981633974483), 0.7071067811865476, 0.003)
+    test.assert_approx(fxmath.sin(1.5707963267948966), 1.0, 0.003)
+    test.assert_approx(fxmath.sin(3.141592653589793), 0.0, 0.003)
+    test.assert_approx(fxmath.sin(-1.5707963267948966), -1.0, 0.003)
+
+@test
+fn test_cos_is_within_an_absolute_3e_3()
+    test.assert_approx(fxmath.cos(0.0), 1.0, 0.003)
+    test.assert_approx(fxmath.cos(1.0471975511965976), 0.5, 0.003)
+    test.assert_approx(fxmath.cos(1.5707963267948966), 0.0, 0.003)
+    test.assert_approx(fxmath.cos(3.141592653589793), -1.0, 0.003)
+
+@test
+fn test_the_range_reduction_makes_a_large_angle_as_good_as_a_small_one()
+    // Thirty-two pi plus a quarter turn is the same sine as a quarter
+    // turn.  An approximation with no reduction would be nowhere near.
+    test.assert_approx(fxmath.sin(100.53096491487338), 0.0, 0.003)
+    test.assert_approx(fxmath.cos(100.53096491487338), 1.0, 0.003)
+
+@test
+fn test_the_pythagorean_identity_holds_to_twice_the_bound()
+    // Both terms carry their own error, so the sum carries both.
+    let s = fxmath.sin(1.0)
+    let c = fxmath.cos(1.0)
+    test.assert_approx(s * s + c * c, 1.0, 0.012)
+
+@test
+fn test_tan_is_within_an_absolute_1e_2_over_the_stated_domain()
+    // The domain is |x| <= 1.0, because outside it the cosine
+    // approaches zero and the relative error grows without limit.
+    test.assert_approx(fxmath.tan(0.0), 0.0, 0.01)
+    test.assert_approx(fxmath.tan(0.5), 0.5463024898437905, 0.01)
+    test.assert_approx(fxmath.tan(0.7853981633974483), 1.0, 0.01)
+    test.assert_approx(fxmath.tan(-0.5), -0.5463024898437905, 0.01)
+
+// ── The two arctangents ─────────────────────────────────────────────
+
+@test
+fn test_atan_is_within_5e_3_radians_at_every_magnitude()
+    // A third of a degree, and the identity outside [-1, 1] is what
+    // makes the bound hold for a large argument too.
+    test.assert_approx(fxmath.atan(0.0), 0.0, 0.005)
+    test.assert_approx(fxmath.atan(1.0), 0.7853981633974483, 0.005)
+    test.assert_approx(fxmath.atan(-1.0), -0.7853981633974483, 0.005)
+    test.assert_approx(fxmath.atan(10.0), 1.4711276743037347, 0.005)
+    test.assert_approx(fxmath.atan(1000.0), 1.5697963271282298, 0.005)
+
+@test
+fn test_atan2_gets_the_quadrant_exactly_right()
+    // The quadrant comes from the signs, not from the approximation, so
+    // a heading is never pointed the wrong way — only slightly off.
+    test.assert_approx(fxmath.atan2(1.0, 1.0), 0.7853981633974483, 0.005)
+    test.assert_approx(fxmath.atan2(1.0, -1.0), 2.356194490192345, 0.005)
+    test.assert_approx(fxmath.atan2(-1.0, -1.0), -2.356194490192345, 0.005)
+    test.assert_approx(fxmath.atan2(-1.0, 1.0), -0.7853981633974483, 0.005)
+    test.assert_approx(fxmath.atan2(1.0, 0.0), 1.5707963267948966, 0.005)
+    test.assert_approx(fxmath.atan2(0.0, -1.0), 3.141592653589793, 0.005)
+
+@test
+fn test_atan2_of_the_zero_vector_is_zero()
+    // What a caller normalising a still magnetometer needs it to be.
+    test.assert_approx(fxmath.atan2(0.0, 0.0), 0.0, 0.0)
+
+// ── The exponential and the logarithms ──────────────────────────────
+
+@test
+fn test_exp_is_within_a_relative_3e_3_over_minus_ten_to_ten()
+    test.assert_approx(fxmath.exp(0.0), 1.0, 0.003)
+    test.assert_approx(fxmath.exp(1.0), 2.718281828459045, 0.0082)
+    test.assert_approx(fxmath.exp(-1.0), 0.36787944117144233, 0.0011)
+    test.assert_approx(fxmath.exp(10.0), 22026.465794806718, 66.1)
+    test.assert_approx(fxmath.exp(-10.0), 0.00004539992976248485, 0.00000014)
+
+@test
+fn test_log2_is_within_an_absolute_3e_3()
+    // The exponent field gives the whole part exactly, which is why the
+    // powers of two are the sharpest points.
+    test.assert_approx(fxmath.log2(1.0), 0.0, 0.003)
+    test.assert_approx(fxmath.log2(2.0), 1.0, 0.003)
+    test.assert_approx(fxmath.log2(8.0), 3.0, 0.003)
+    test.assert_approx(fxmath.log2(0.5), -1.0, 0.003)
+    test.assert_approx(fxmath.log2(10.0), 3.321928094887362, 0.003)
+
+@test
+fn test_ln_is_within_an_absolute_3e_3()
+    // Absolute, because ln(1) is zero and no relative bound is
+    // meaningful there.
+    test.assert_approx(fxmath.ln(1.0), 0.0, 0.003)
+    test.assert_approx(fxmath.ln(2.0), 0.6931471805599453, 0.003)
+    test.assert_approx(fxmath.ln(2.718281828459045), 1.0, 0.003)
+    test.assert_approx(fxmath.ln(0.5), -0.6931471805599453, 0.003)
+    test.assert_approx(fxmath.ln(1000.0), 6.907755278982137, 0.003)
+
+@test
+fn test_exp_and_ln_round_trip_to_twice_the_bound()
+    test.assert_approx(fxmath.ln(fxmath.exp(2.0)), 2.0, 0.006)
+
+// ── The two powers ──────────────────────────────────────────────────
+
+@test
+fn test_powf_is_within_a_relative_1e_2_over_the_stated_domain()
+    // Both approximations are in the answer, which is why the bound is
+    // looser than either of its parts.
+    test.assert_approx(fxmath.powf(2.0, 0.5), 1.4142135623730951, 0.015)
+    test.assert_approx(fxmath.powf(2.0, 10.0), 1024.0, 10.3)
+    test.assert_approx(fxmath.powf(10.0, -2.0), 0.01, 0.0001)
+    test.assert_approx(fxmath.powf(1.0, 4.0), 1.0, 0.01)
+
+@test
+fn test_powi_is_exact_repeated_multiplication_and_takes_a_negative_base()
+    // No approximation at all, so a negative base is fine where `powf`
+    // answers a NaN.
+    test.assert_approx(fxmath.powi(-2.0, 3), -8.0, 0.0)
+    test.assert_approx(fxmath.powi(2.0, 10), 1024.0, 0.0)
+    test.assert_approx(fxmath.powi(3.0, 0), 1.0, 0.0)
+    test.assert_approx(fxmath.powi(2.0, -2), 0.25, 0.0)
+
+// ── The exact helpers ───────────────────────────────────────────────
+
+@test
+fn test_the_five_exact_helpers_answer_what_std_math_would()
+    // Not approximations: a handful of comparisons and casts.  They are
+    // here because the embedded tier refuses `math.floor` and the other
+    // four for the same libm reason as `math.sqrt`.
+    test.assert_approx(fxmath.floor(-1.7), -2.0, 0.0)
+    test.assert_approx(fxmath.floor(1.7), 1.0, 0.0)
+    test.assert_approx(fxmath.ceil(-1.7), -1.0, 0.0)
+    test.assert_approx(fxmath.ceil(1.2), 2.0, 0.0)
+    test.assert_approx(fxmath.round(1.5), 2.0, 0.0)
+    test.assert_approx(fxmath.round(-1.5), -2.0, 0.0)
+    test.assert_approx(fxmath.trunc(-1.7), -1.0, 0.0)
+    test.assert_approx(fxmath.trunc(1.7), 1.0, 0.0)
+    test.assert_approx(fxmath.abs(-1.5), 1.5, 0.0)
+    test.assert_approx(fxmath.abs(1.5), 1.5, 0.0)

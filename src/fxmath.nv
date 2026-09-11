@@ -1,0 +1,245 @@
+// fxmath — the float functions a device cannot get from `std.math`,
+// approximated in arithmetic a soft-float core can afford.
+//
+// Every body is a `todo()`.  The signatures are the design, and the
+// compiler checks them as claims; see the README for the stamp.
+//
+// WHY THIS MODULE EXISTS, in the compiler's own words.  A function that
+// carries `@tier(embedded)` and calls `math.sqrt` is refused:
+//
+//   tier error: function 'root' is @tier(embedded) but calls
+//   'math.sqrt' — it lowers to an `llvm.sqrt`-family float intrinsic,
+//   which on a soft-float freestanding target LLVM expands to a libm
+//   call, and linking libm into a 64 KB image is a hidden cost this
+//   tier refuses (the IR looks free; the object file is not).  Use
+//   fixed-point arithmetic, or link your own implementation through
+//   @ffi and call that.  [E4000]
+//
+// `sqrt`, `pow`, `log`, `log2`, `log10`, `exp`, `sin`, `cos`, `tan`,
+// `asin`, `acos`, `atan`, `atan2`, `hypot`, `floor`, `ceil`, `round`
+// and `trunc` are all in that set.  The tier admits `min`, `max`,
+// `is_nan` and the constants and nothing else.  So a device that needs
+// a square root has three choices: fixed-point arithmetic, an `@ffi`
+// call into somebody's libm, or this — the approximations `micromath`
+// ships, written in `+`, `-`, `*`, `/`, comparisons and the two casts
+// between `Int` and `Float`, all of which the tier admits and all of
+// which a Cortex-M4's single-precision FPU or a soft-float routine can
+// do without pulling in a library.
+//
+// THE ACCURACY IS THE CONTRACT.  Each function's doc comment states the
+// bound this package asserts for it, over the domain it states, and
+// `tests/fxmath_tests.nv` asserts exactly those numbers.  They are
+// looser than an exact libm and they are not free to change: a consumer
+// that filters a sensor with `atan2` is relying on the bound, so
+// widening one is a breaking change and tightening one is not.
+//
+// WHEN TO USE THE FIXED-POINT SIDE INSTEAD.  If the quantity has a
+// known range and a known precision — a temperature, an angle, a duty
+// cycle — the four Q formats are exact within their step and cost one
+// integer multiply.  Reach for this module when the operation is
+// genuinely transcendental and the input's magnitude is not known in
+// advance.
+
+// The square root of `x`.
+//
+// Relative error at most 2e-3 for `x > 0`.  Zero answers zero; a
+// negative `x` answers a `NaN`, matching `math.sqrt`.
+//
+// One Newton step over the reciprocal estimate, which is why the bound
+// is the same as `invsqrt`'s: this is `x * invsqrt(x)`.
+//
+// ```novo
+// use fxmath
+//
+// fn main() [io]
+//     let r = fxmath.sqrt(2.0)
+//     println("${r > 1.41 and r < 1.42}")   // true
+// ```
+pub fn sqrt(x: Float) -> Float
+    todo("fxmath.sqrt")
+
+// `1 / sqrt(x)`.
+//
+// Relative error at most 2e-3 for `x > 0`.  The bit-pattern estimate
+// followed by one Newton step — the shape everybody knows from Quake
+// III, and still the cheapest useful reciprocal root there is.
+//
+// It is the primitive rather than the convenience: normalising a vector
+// wants exactly this and never wants the division that `1.0 / sqrt(x)`
+// would cost.
+pub fn invsqrt(x: Float) -> Float
+    todo("fxmath.invsqrt")
+
+// The sine of `x`, in radians.
+//
+// Absolute error at most 3e-3, for every finite `x`.  The range
+// reduction is part of the function, so a large angle is as accurate as
+// a small one — up to the point where the angle itself has lost
+// precision as a `Float`, which is around 1e7 radians.
+//
+// A parabolic approximation with one correction pass over the reduced
+// angle: two multiplies and an add, and no table.
+//
+// ```novo
+// use fxmath
+//
+// fn main() [io]
+//     let s = fxmath.sin(0.0)
+//     println("${s > -0.003 and s < 0.003}")   // true
+// ```
+pub fn sin(x: Float) -> Float
+    todo("fxmath.sin")
+
+// The cosine of `x`, in radians.
+//
+// Absolute error at most 3e-3, for every finite `x`.  `sin(x + pi/2)`,
+// with the same range reduction and the same cost.
+pub fn cos(x: Float) -> Float
+    todo("fxmath.cos")
+
+// The tangent of `x`, in radians.
+//
+// `sin(x) / cos(x)`, so the two bounds compound and the RELATIVE error
+// grows without limit near an odd multiple of pi/2 where the cosine
+// approaches zero.  The bound this package asserts is an absolute error
+// of at most 1e-2 for `|x| <= 1.0`, and outside that a caller who needs
+// a tangent near the asymptote should be using `atan2` on the two
+// components instead.
+pub fn tan(x: Float) -> Float
+    todo("fxmath.tan")
+
+// The arctangent of `x`, in radians, in `(-pi/2, pi/2)`.
+//
+// Absolute error at most 5e-3 radians, for every finite `x`, which is
+// about a third of a degree.  A rational approximation over `[-1, 1]`
+// with the identity `atan(x) = pi/2 - atan(1/x)` outside it, so the
+// bound holds at every magnitude.
+pub fn atan(x: Float) -> Float
+    todo("fxmath.atan")
+
+// The angle of the point `(x, y)` from the positive x axis, in radians,
+// in `(-pi, pi]`.
+//
+// Absolute error at most 5e-3 radians.  The QUADRANT is exact — it
+// comes from the signs of the two arguments rather than from the
+// approximation — so a heading computed from a magnetometer never
+// points the wrong way, it is only ever slightly off.
+//
+// `atan2(0.0, 0.0)` answers 0.0, which is what `math.atan2` does and
+// what a caller normalising a zero vector needs it to do.
+//
+// Note the argument order: `y` first, as in every other atan2 there has
+// ever been.
+//
+// ```novo
+// use fxmath
+//
+// fn main() [io]
+//     let a = fxmath.atan2(1.0, 1.0)
+//     println("${a > 0.78 and a < 0.79}")   // true — a quarter of pi
+// ```
+pub fn atan2(y: Float, x: Float) -> Float
+    todo("fxmath.atan2")
+
+// `e` raised to `x`.
+//
+// Relative error at most 3e-3 for `-10 <= x <= 10`.  `exp2(x * log2(e))`,
+// where the power of two is assembled from the exponent field directly
+// and the fractional part is a short polynomial — so the cost does not
+// depend on the magnitude of `x`.
+//
+// Outside that domain the answer is still monotone and still the right
+// order of magnitude, and it saturates to zero and to infinity at the
+// ends of the `Float` range rather than going erratic.
+pub fn exp(x: Float) -> Float
+    todo("fxmath.exp")
+
+// The base-2 logarithm of `x`.
+//
+// Absolute error at most 3e-3 for `x > 0`.  The exponent field gives
+// the whole part exactly and a polynomial over the mantissa gives the
+// rest, which is why this is the cheapest of the three logarithms and
+// the one the other two are built on.
+//
+// Zero answers negative infinity and a negative `x` answers a `NaN`,
+// matching `math.log2`.
+pub fn log2(x: Float) -> Float
+    todo("fxmath.log2")
+
+// The natural logarithm of `x`.
+//
+// Absolute error at most 3e-3 for `x > 0` — absolute rather than
+// relative, because `ln(1)` is zero and no relative bound is meaningful
+// there.  `log2(x) * ln(2)`.
+//
+// ```novo
+// use fxmath
+//
+// fn main() [io]
+//     let l = fxmath.ln(1.0)
+//     println("${l > -0.003 and l < 0.003}")   // true
+// ```
+pub fn ln(x: Float) -> Float
+    todo("fxmath.ln")
+
+// `x` raised to `y`, for a positive `x`.
+//
+// Relative error at most 1e-2 for `1e-3 <= x <= 1e3` and `|y| <= 4`.
+// `exp(y * ln(x))`, so both approximations are in the answer and the
+// error grows with `|y * ln(x)|` — which is why the bound is looser
+// than either of its parts and why the domain is stated.
+//
+// A negative `x` answers a `NaN` even for a whole `y`, because the
+// logarithm is where this goes and the logarithm has no answer there.
+// A caller who wants `(-2.0) ** 3` wants `powi`.
+pub fn powf(x: Float, y: Float) -> Float
+    todo("fxmath.powf")
+
+// `x` raised to the whole number `n`, exactly as repeated
+// multiplication.
+//
+// No approximation at all: binary exponentiation, so the only error is
+// the rounding of the multiplies themselves and a negative `x` is fine.
+// At most 32 multiplies, and a caller squaring or cubing something
+// should reach for this rather than `powf`.
+//
+// ```novo
+// use fxmath
+//
+// fn main() [io]
+//     println("${fxmath.powi(-2.0, 3)}")   // -8
+// ```
+pub fn powi(x: Float, n: Int) -> Float
+    todo("fxmath.powi")
+
+// ── Exact helpers the tier also refuses from `std.math` ─────────────
+//
+// These are not approximations — each is a handful of comparisons and
+// casts and answers exactly what `math.floor`, `math.ceil`,
+// `math.round`, `math.trunc` and `math.abs` would.  They are here
+// because those five are in the set the embedded tier refuses, for the
+// same libm reason, and a device that has to round a number should not
+// have to write the cast dance itself.
+
+// The largest whole number no greater than `x`, toward negative
+// infinity.  Exact.
+pub fn floor(x: Float) -> Float
+    todo("fxmath.floor")
+
+// The smallest whole number no less than `x`.  Exact.
+pub fn ceil(x: Float) -> Float
+    todo("fxmath.ceil")
+
+// `x` rounded to the nearest whole number, halves away from zero.
+// Exact.
+pub fn round(x: Float) -> Float
+    todo("fxmath.round")
+
+// `x` truncated toward zero.  Exact — `trunc(-1.7)` is -1.0 where
+// `floor(-1.7)` is -2.0.
+pub fn trunc(x: Float) -> Float
+    todo("fxmath.trunc")
+
+// `|x|`.  Exact: the sign bit cleared.
+pub fn abs(x: Float) -> Float
+    todo("fxmath.abs")

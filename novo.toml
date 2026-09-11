@@ -1,0 +1,43 @@
+[package]
+name        = "fixedpoint-nv"
+version     = "0.0.1"
+description = "Q-format fixed-point arithmetic as @value types — Q16.16, Q1.15, Q8.24 and unsigned UQ16.16 — with the wide intermediate, the saturating and wrapping families, and decimal in both directions; plus micromath's float approximations with stated error bounds, for the cores where the embedded tier refuses std.math because it would link libm.  Interface only — every body is a todo()."
+license     = "Apache-2.0"
+
+# An INTERFACE release: every `pub fn` body is a `todo()`, so the
+# signatures and the effect rows are published and nothing is
+# implemented.  `novo pkg publish` recognises the shape and requires
+# both the draft stability and the 0.0.x version; the first
+# implementation is the 0.1.0 published over it.
+stability   = "draft"
+
+# `core`: integer and float arithmetic over values the caller already
+# holds.  No function declares an effect, nothing is read and nothing is
+# written.
+#
+# It carries `tests/embedded_probe.nv`, so the device claim is BUILT.
+# The claim is the package's whole argument: `@tier(embedded)` refuses
+# `math.sqrt` because it expands to a libm call, and everything here is
+# arithmetic the tier admits.
+layer       = "core"
+
+category    = "embedded"
+
+tags        = ["fixed-point", "q-format", "micromath", "no-fpu", "dsp", "embedded", "no-alloc"]
+repository  = "https://github.com/novolang/fixedpoint-nv"
+maintainers = ["novo-lang"]
+novo        = ">= 0.8.9"
+
+# A library: no `main`, so `novo pkg build` type-checks and
+# effect-checks every module under `src/` and writes no binary.
+
+[docs.pages]
+"README.md" = "Arithmetic for a core with no FPU"
+
+[dependencies]
+# None.  `numfmt-nv` is the one a reader would expect, because a device
+# that prints one of these numbers wants digits in a buffer it owns —
+# but printing is the CALLER's step, not this package's, and the
+# embedded probe is built from the package's own core modules and
+# nothing they depend on, so a dependency would cost the device claim.
+# The README says which two calls to make.

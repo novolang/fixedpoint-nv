@@ -1,0 +1,250 @@
+// fxuq16_16 — UQ16.16, the unsigned format: sixteen integer bits,
+// sixteen fractional bits, no sign, in a 32-bit container.
+//
+// Every body is a `todo()`.  The signatures are the design, and the
+// compiler checks them as claims; see the README for the stamp.
+//
+// THE SAME FUNCTIONS AS `fxq16_16` LESS TWO.  `neg` and `abs` are not
+// here: a format with no negative numbers has nothing to negate and
+// everything is already its own magnitude.  Everything else means what
+// it means in `fxq16_16`, which is where each family's semantics are
+// written out.
+//
+// WHY IT SHIPS.  The three signed formats spend a bit on a sign, and
+// the quantities a device actually measures are mostly one-sided: a
+// duty cycle, an elapsed time, a distance, a frequency, a battery
+// voltage, a pressure.  The bit buys double the integer range —
+// 0.0 up to 65535.99998 instead of ±32768 — with the same step of
+// 2^-16, and `sub` below zero becomes a refusal instead of a silently
+// plausible negative.
+//
+// THE SUBTRACTION IS THE POINT.  `sub` traps when `b > a` and `sat_sub`
+// answers zero, and neither of those is a rounding decision: an elapsed
+// time that came out negative is a clock that went backwards, and a
+// signed format would have carried it forward as a number.
+//
+// THE WIDE INTERMEDIATE IS UNSIGNED.  Two full-scale UQ16.16 raw values
+// multiply to just over 2^64, which a signed `Int` cannot hold, so the
+// multiply's intermediate is computed in `u64` and shifted there before
+// it comes back.  That is the one place this module's arithmetic is not
+// the signed module's with a sign check bolted on.
+
+// A UQ16.16 number: sixteen integer bits, sixteen fractional bits, and
+// no sign.
+//
+// A `@value` struct — one integer in the caller's frame.  `raw` is
+// always 0 ..= 4294967295, so the field goes straight into a 32-bit
+// peripheral word.
+pub @value
+struct FxUQ16_16
+    raw: Int
+
+// Zero, which is also `min_value`.
+pub fn zero() -> FxUQ16_16
+    todo("fxuq16_16.zero")
+
+// One — `raw` is 65536.
+pub fn one() -> FxUQ16_16
+    todo("fxuq16_16.one")
+
+// Zero.
+//
+// Here so the four formats answer the same six questions, and because a
+// clamp written generically over a format reads better asking for the
+// bound than special-casing the unsigned one.
+pub fn min_value() -> FxUQ16_16
+    todo("fxuq16_16.min_value")
+
+// 65535.9999847… — `raw` is 4294967295.
+//
+// Twice the positive range of `fxq16_16`, which is the bit the sign was
+// costing.
+pub fn max_value() -> FxUQ16_16
+    todo("fxuq16_16.max_value")
+
+// The smallest step: `raw` is 1, which is 2^-16.
+pub fn epsilon() -> FxUQ16_16
+    todo("fxuq16_16.epsilon")
+
+// How many fractional bits this format has: 16.
+pub fn frac_bits() -> Int
+    todo("fxuq16_16.frac_bits")
+
+// ── Construction ────────────────────────────────────────────────────
+
+// The number whose stored integer is `raw`, clamped to
+// 0 ..= 4294967295.
+//
+// A NEGATIVE `raw` clamps to zero rather than being read as a large
+// unsigned value, which is the opposite of what a C cast would do and
+// the reason this takes an `Int` rather than trusting the caller: a
+// negative reading that silently became 4 billion is the bug this
+// format was chosen to avoid.
+pub fn from_raw(raw: Int) -> FxUQ16_16
+    todo("fxuq16_16.from_raw")
+
+// The stored integer, 0 ..= 4294967295.
+pub fn raw(x: FxUQ16_16) -> Int
+    todo("fxuq16_16.raw")
+
+// `n` as a UQ16.16, saturating outside 0 ..= 65535.
+//
+// ```novo
+// use fxuq16_16
+//
+// fn main() [io]
+//     println("${fxuq16_16.from_int(3).raw}")   // 196608
+// ```
+pub fn from_int(n: Int) -> FxUQ16_16
+    todo("fxuq16_16.from_int")
+
+// `f` as a UQ16.16, rounded, saturating outside the range.  A negative
+// `f` becomes zero.
+pub fn from_float(f: Float) -> FxUQ16_16
+    todo("fxuq16_16.from_float")
+
+// `num / den` as a UQ16.16, rounded, with no float anywhere.  A
+// negative quotient becomes zero.
+pub fn from_ratio(num: Int, den: Int) -> FxUQ16_16
+    todo("fxuq16_16.from_ratio")
+
+// ── Conversion out ──────────────────────────────────────────────────
+
+// The integer part.
+pub fn to_int(x: FxUQ16_16) -> Int
+    todo("fxuq16_16.to_int")
+
+// The number as a `Float`.  Exact.
+pub fn to_float(x: FxUQ16_16) -> Float
+    todo("fxuq16_16.to_float")
+
+// The same number as a Q16.16, saturating above 32767.99998.
+//
+// The direction that can lose something, because the signed format's
+// positive range is half this one's.  What a measurement takes when it
+// joins an expression that has a sign in it — an error term, a
+// difference, a correction.
+//
+// ```novo
+// use fxuq16_16
+//
+// fn main() [io]
+//     println("${fxuq16_16.to_q16_16(fxuq16_16.from_int(3)).raw}")   // 196608
+// ```
+pub fn to_q16_16(x: FxUQ16_16) -> FxQ16_16
+    todo("fxuq16_16.to_q16_16")
+
+// A Q16.16 as a UQ16.16.  A negative value becomes zero.
+//
+// The clamp is deliberate and not a rounding: a measurement that came
+// out negative is a measurement to floor at zero, which is what every
+// sensor driver does by hand today.
+pub fn from_q16_16(x: FxQ16_16) -> FxUQ16_16
+    todo("fxuq16_16.from_q16_16")
+
+// ── Arithmetic that traps on overflow ───────────────────────────────
+
+// `a + b`.  Traps above `max_value`.
+pub fn add(a: FxUQ16_16, b: FxUQ16_16) -> FxUQ16_16
+    todo("fxuq16_16.add")
+
+// `a - b`.  Traps when `b > a`.
+//
+// The trap is the format earning its place: in a signed format that
+// subtraction answers a negative number and the program carries it,
+// and here it says at the line that the two readings arrived out of
+// order.
+pub fn sub(a: FxUQ16_16, b: FxUQ16_16) -> FxUQ16_16
+    todo("fxuq16_16.sub")
+
+// `a * b`, with the unsigned 64-bit intermediate.
+//
+// `((a.raw as u64) * (b.raw as u64)) >> 16`, computed in `u64` because
+// two full-scale raw values multiply past what a signed `Int` holds.
+// Traps above `max_value`.
+//
+// ```novo
+// use fxuq16_16
+//
+// fn main() [io]
+//     let half = fxuq16_16.from_float(0.5)
+//     println("${fxuq16_16.mul(half, half).raw}")   // 16384 — a quarter
+// ```
+pub fn mul(a: FxUQ16_16, b: FxUQ16_16) -> FxUQ16_16
+    todo("fxuq16_16.mul")
+
+// `a / b`.  A `b` of zero saturates to `max_value`.
+pub fn div(a: FxUQ16_16, b: FxUQ16_16) -> FxUQ16_16
+    todo("fxuq16_16.div")
+
+// ── Saturating: clamp to the end of the range ───────────────────────
+
+// `a + b`, clamped to `max_value`.
+pub fn sat_add(a: FxUQ16_16, b: FxUQ16_16) -> FxUQ16_16
+    todo("fxuq16_16.sat_add")
+
+// `a - b`, clamped to zero when `b > a`.
+//
+// What a duty cycle being wound down wants: it stops at off rather than
+// arriving at full.
+//
+// ```novo
+// use fxuq16_16
+//
+// fn main() [io]
+//     let small = fxuq16_16.from_float(0.25)
+//     println("${fxuq16_16.sat_sub(small, fxuq16_16.one()).raw}")   // 0
+// ```
+pub fn sat_sub(a: FxUQ16_16, b: FxUQ16_16) -> FxUQ16_16
+    todo("fxuq16_16.sat_sub")
+
+// `a * b`, clamped.
+pub fn sat_mul(a: FxUQ16_16, b: FxUQ16_16) -> FxUQ16_16
+    todo("fxuq16_16.sat_mul")
+
+// `a / b`, clamped.
+pub fn sat_div(a: FxUQ16_16, b: FxUQ16_16) -> FxUQ16_16
+    todo("fxuq16_16.sat_div")
+
+// ── Wrapping: round the container ───────────────────────────────────
+
+// `a + b`, wrapped round the 32-bit container.
+pub fn wrap_add(a: FxUQ16_16, b: FxUQ16_16) -> FxUQ16_16
+    todo("fxuq16_16.wrap_add")
+
+// `a - b`, wrapped — so `zero() - epsilon()` is `max_value`.
+//
+// The one operation a free-running counter wants: a timer that wraps at
+// 2^32 ticks and a difference taken across the wrap come out right,
+// which is why this family exists at all.
+pub fn wrap_sub(a: FxUQ16_16, b: FxUQ16_16) -> FxUQ16_16
+    todo("fxuq16_16.wrap_sub")
+
+// `a * b`, wrapped.
+pub fn wrap_mul(a: FxUQ16_16, b: FxUQ16_16) -> FxUQ16_16
+    todo("fxuq16_16.wrap_mul")
+
+// ── Rounding to whole numbers ───────────────────────────────────────
+
+// The largest whole number no greater than `x`.
+pub fn floor(x: FxUQ16_16) -> FxUQ16_16
+    todo("fxuq16_16.floor")
+
+// The smallest whole number no less than `x`.  Traps above 65535.
+pub fn ceil(x: FxUQ16_16) -> FxUQ16_16
+    todo("fxuq16_16.ceil")
+
+// `x` rounded to the nearest whole number, halves up.  Traps above
+// 65535.5.
+pub fn round(x: FxUQ16_16) -> FxUQ16_16
+    todo("fxuq16_16.round")
+
+// The fractional part, in `[0, 1)`.
+pub fn frac(x: FxUQ16_16) -> FxUQ16_16
+    todo("fxuq16_16.frac")
+
+// ── Comparison ──────────────────────────────────────────────────────
+
+// -1 when `a < b`, 0 when equal, 1 when `a > b`.
+pub fn compare(a: FxUQ16_16, b: FxUQ16_16) -> Int
+    todo("fxuq16_16.compare")

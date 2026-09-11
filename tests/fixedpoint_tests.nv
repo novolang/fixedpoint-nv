@@ -1,0 +1,449 @@
+// tests/fixedpoint_tests.nv — the API tests for the four Q formats and
+// the text half, written against the signatures.
+//
+// They COMPILE today and they FAIL at run, with `not implemented:
+// <module>.<fn>` from the `todo()` that is each body.  That is the
+// expected state of an interface release: the compiler has checked
+// every signature, every type and every effect row, and nothing else
+// has been checked because there is nothing else yet.
+//
+// WHERE THE VECTORS COME FROM.  The `fixed` crate's documented
+// semantics for each family — which operation traps, which clamps,
+// which wraps, and what `frac` does to a negative number — and the
+// arithmetic definition of a Q format for every stored integer here:
+// a Q16.16 value is the number times 65536, so 0.5 is 32768 and no
+// vector needs a reference implementation to check it.
+
+use std.test
+use fxq16_16
+use fxq1_15
+use fxq8_24
+use fxuq16_16
+use fixedpoint
+
+// ── Q16.16, the hub ─────────────────────────────────────────────────
+
+@test
+fn test_a_q16_16_stored_integer_is_the_number_times_65536()
+    test.assert_eq(fxq16_16.zero().raw, 0)
+    test.assert_eq(fxq16_16.one().raw, 65536)
+    test.assert_eq(fxq16_16.epsilon().raw, 1)
+    test.assert_eq(fxq16_16.from_int(3).raw, 196608)
+    test.assert_eq(fxq16_16.from_float(0.5).raw, 32768)
+    test.assert_eq(fxq16_16.frac_bits(), 16)
+
+@test
+fn test_the_q16_16_range_is_the_32_bit_container()
+    test.assert_eq(fxq16_16.min_value().raw, -2147483648)
+    test.assert_eq(fxq16_16.max_value().raw, 2147483647)
+
+@test
+fn test_from_ratio_builds_a_constant_with_no_float_anywhere()
+    // 65536 / 3 is 21845.33, and a third rounds to 21845.
+    test.assert_eq(fxq16_16.from_ratio(1, 3).raw, 21845)
+    test.assert_eq(fxq16_16.from_ratio(1, 4).raw, 16384)
+    test.assert_eq(fxq16_16.from_ratio(-1, 2).raw, -32768)
+
+@test
+fn test_from_raw_and_raw_round_trip_so_the_value_is_a_wire_format()
+    test.assert_eq(fxq16_16.raw(fxq16_16.from_raw(1376256)), 1376256)
+    // Outside the container, clamped rather than wrapped.
+    test.assert_eq(fxq16_16.from_raw(4000000000).raw, 2147483647)
+    test.assert_eq(fxq16_16.from_raw(-4000000000).raw, -2147483648)
+
+@test
+fn test_to_int_truncates_toward_zero_and_floor_does_not()
+    let neg = fxq16_16.from_float(-1.5)
+    test.assert_eq(fxq16_16.to_int(neg), -1)
+    test.assert_eq(fxq16_16.floor(neg).raw, -131072)
+    test.assert_eq(fxq16_16.ceil(neg).raw, -65536)
+    test.assert_eq(fxq16_16.round(neg).raw, -131072)
+
+@test
+fn test_frac_is_never_negative_so_floor_plus_frac_is_the_number()
+    let neg = fxq16_16.from_float(-1.25)
+    test.assert_eq(fxq16_16.frac(neg).raw, 49152)
+    test.assert_eq(fxq16_16.add(fxq16_16.floor(neg), fxq16_16.frac(neg)).raw, neg.raw)
+
+@test
+fn test_the_multiply_shifts_the_scale_back_out()
+    // Two numbers each scaled by 65536 multiply to something scaled by
+    // 65536 squared, so one factor comes back out.
+    let half = fxq16_16.from_float(0.5)
+    test.assert_eq(fxq16_16.mul(half, half).raw, 16384)
+    test.assert_eq(fxq16_16.mul(fxq16_16.from_int(3), fxq16_16.from_int(4)).raw, 786432)
+    test.assert_eq(fxq16_16.mul(fxq16_16.one(), half).raw, 32768)
+
+@test
+fn test_the_divide_shifts_the_scale_in_first()
+    let half = fxq16_16.from_float(0.5)
+    test.assert_eq(fxq16_16.div(half, fxq16_16.from_int(2)).raw, 16384)
+    test.assert_eq(fxq16_16.div(fxq16_16.one(), fxq16_16.from_int(4)).raw, 16384)
+
+@test
+fn test_a_divide_by_zero_saturates_by_the_sign_rather_than_trapping()
+    // A sensor that went quiet should clamp an output, not stop the
+    // firmware.
+    test.assert_eq(fxq16_16.div(fxq16_16.one(), fxq16_16.zero()).raw, 2147483647)
+    test.assert_eq(fxq16_16.div(fxq16_16.from_int(-1), fxq16_16.zero()).raw, -2147483648)
+
+@test
+fn test_add_and_sub_and_neg_and_abs()
+    let one = fxq16_16.one()
+    let half = fxq16_16.from_float(0.5)
+    test.assert_eq(fxq16_16.add(one, half).raw, 98304)
+    test.assert_eq(fxq16_16.sub(one, half).raw, 32768)
+    test.assert_eq(fxq16_16.neg(half).raw, -32768)
+    test.assert_eq(fxq16_16.abs(fxq16_16.from_float(-0.5)).raw, 32768)
+
+@test
+fn test_the_saturating_family_clamps_to_the_end_of_the_range()
+    let hi = fxq16_16.max_value()
+    let lo = fxq16_16.min_value()
+    test.assert_eq(fxq16_16.sat_add(hi, fxq16_16.one()).raw, hi.raw)
+    test.assert_eq(fxq16_16.sat_sub(lo, fxq16_16.one()).raw, lo.raw)
+    test.assert_eq(fxq16_16.sat_mul(hi, fxq16_16.from_int(2)).raw, hi.raw)
+    test.assert_eq(fxq16_16.sat_mul(lo, fxq16_16.from_int(2)).raw, lo.raw)
+
+@test
+fn test_the_wrapping_family_rounds_the_container()
+    // What a phase accumulator wants and nothing else does.
+    let hi = fxq16_16.max_value()
+    test.assert_eq(fxq16_16.wrap_add(hi, fxq16_16.epsilon()).raw, -2147483648)
+    test.assert_eq(fxq16_16.wrap_sub(fxq16_16.min_value(), fxq16_16.epsilon()).raw, 2147483647)
+
+@test
+fn test_the_plain_family_traps_where_the_other_two_do_not()
+    // An overflow in a sum that was meant to stay in range is a bug,
+    // and the trap names the line.
+    test.assert_raises(overflowing_add)
+
+fn overflowing_add() -> Int
+    fxq16_16.add(fxq16_16.max_value(), fxq16_16.one()).raw
+
+@test
+fn test_compare_orders_the_numbers()
+    let half = fxq16_16.from_float(0.5)
+    test.assert_eq(fxq16_16.compare(half, fxq16_16.one()), -1)
+    test.assert_eq(fxq16_16.compare(half, half), 0)
+    test.assert_eq(fxq16_16.compare(fxq16_16.one(), half), 1)
+
+@test
+fn test_every_q16_16_value_has_an_exact_float()
+    // 32 bits of mantissa fit in 53, so the conversion loses nothing.
+    test.assert_approx(fxq16_16.to_float(fxq16_16.from_float(0.5)), 0.5, 0.0)
+    test.assert_approx(fxq16_16.to_float(fxq16_16.one()), 1.0, 0.0)
+    test.assert_approx(fxq16_16.to_float(fxq16_16.from_int(-3)), -3.0, 0.0)
+
+// ── Q1.15, where the product of two in-range numbers stays in range ──
+
+@test
+fn test_a_q1_15_stored_integer_is_the_number_times_32768()
+    test.assert_eq(fxq1_15.zero().raw, 0)
+    test.assert_eq(fxq1_15.from_float(0.5).raw, 16384)
+    test.assert_eq(fxq1_15.epsilon().raw, 1)
+    test.assert_eq(fxq1_15.frac_bits(), 15)
+
+@test
+fn test_one_is_not_representable_in_q1_15_and_answers_max_value()
+    // The format's defining compromise: one integer bit spends itself
+    // on the sign, so the positive end stops one step short.
+    test.assert_eq(fxq1_15.one().raw, 32767)
+    test.assert_eq(fxq1_15.max_value().raw, 32767)
+    test.assert_eq(fxq1_15.min_value().raw, -32768)
+
+@test
+fn test_a_product_of_two_q1_15_numbers_does_not_grow()
+    // Which is why every filter is written in this format.
+    let half = fxq1_15.from_float(0.5)
+    test.assert_eq(fxq1_15.mul(half, half).raw, 8192)
+    let big = fxq1_15.from_float(0.9)
+    test.assert_eq(fxq1_15.compare(fxq1_15.abs(fxq1_15.mul(big, big)), big), -1)
+
+@test
+fn test_the_one_product_that_leaves_the_range_saturates()
+    // -1.0 times -1.0 is +1.0, which this format cannot hold.  It is
+    // the single pair of in-range values whose product is not, and it
+    // is why a filter uses `sat_mul`.
+    let lo = fxq1_15.min_value()
+    test.assert_eq(fxq1_15.sat_mul(lo, lo).raw, 32767)
+    test.assert_raises(q1_15_square_of_minus_one)
+
+fn q1_15_square_of_minus_one() -> Int
+    fxq1_15.mul(fxq1_15.min_value(), fxq1_15.min_value()).raw
+
+@test
+fn test_q1_15_widens_to_the_hub_exactly_and_narrows_with_rounding()
+    let half = fxq1_15.from_float(0.5)
+    test.assert_eq(fxq1_15.to_q16_16(half).raw, 32768)
+    test.assert_eq(fxq1_15.from_q16_16(fxq16_16.from_float(0.5)).raw, 16384)
+    // Narrowing saturates rather than wrapping: 3.0 is not a Q1.15.
+    test.assert_eq(fxq1_15.from_q16_16(fxq16_16.from_int(3)).raw, 32767)
+    test.assert_eq(fxq1_15.from_q16_16(fxq16_16.from_int(-3)).raw, -32768)
+
+@test
+fn test_q1_15_holds_only_two_whole_numbers()
+    test.assert_eq(fxq1_15.from_int(0).raw, 0)
+    test.assert_eq(fxq1_15.from_int(-1).raw, -32768)
+    test.assert_eq(fxq1_15.from_int(5).raw, 32767)
+    test.assert_eq(fxq1_15.to_int(fxq1_15.from_float(-0.5)), 0)
+    test.assert_eq(fxq1_15.to_int(fxq1_15.min_value()), -1)
+
+@test
+fn test_the_q1_15_saturating_family_is_what_a_mixer_wants()
+    // Two loud samples summed are clipped, which is audible, rather
+    // than wrapped, which is a click.
+    let loud = fxq1_15.from_float(0.9)
+    test.assert_eq(fxq1_15.sat_add(loud, loud).raw, 32767)
+    test.assert_eq(fxq1_15.sat_sub(fxq1_15.neg(loud), loud).raw, -32768)
+    test.assert_eq(fxq1_15.sat_div(loud, fxq1_15.from_float(0.1)).raw, 32767)
+
+@test
+fn test_the_q1_15_wrapping_family_rounds_the_16_bit_container()
+    test.assert_eq(fxq1_15.wrap_add(fxq1_15.max_value(), fxq1_15.epsilon()).raw, -32768)
+    test.assert_eq(fxq1_15.wrap_sub(fxq1_15.min_value(), fxq1_15.epsilon()).raw, 32767)
+    test.assert_eq(fxq1_15.wrap_mul(fxq1_15.min_value(), fxq1_15.min_value()).raw, -32768)
+
+@test
+fn test_q1_15_rounding_and_the_rest()
+    let neg = fxq1_15.from_float(-0.25)
+    test.assert_eq(fxq1_15.floor(neg).raw, -32768)
+    test.assert_eq(fxq1_15.ceil(neg).raw, 0)
+    test.assert_eq(fxq1_15.round(neg).raw, 0)
+    test.assert_eq(fxq1_15.frac(neg).raw, 24576)
+    test.assert_eq(fxq1_15.from_ratio(1, 4).raw, 8192)
+    test.assert_eq(fxq1_15.from_raw(70000).raw, 32767)
+    test.assert_eq(fxq1_15.raw(fxq1_15.from_raw(16384)), 16384)
+    test.assert_approx(fxq1_15.to_float(fxq1_15.from_float(0.5)), 0.5, 0.0)
+    test.assert_eq(fxq1_15.sub(fxq1_15.add(neg, neg), neg).raw, -8192)
+
+// ── Q8.24, the control-loop format ──────────────────────────────────
+
+@test
+fn test_a_q8_24_stored_integer_is_the_number_times_16777216()
+    test.assert_eq(fxq8_24.zero().raw, 0)
+    test.assert_eq(fxq8_24.one().raw, 16777216)
+    test.assert_eq(fxq8_24.from_float(0.5).raw, 8388608)
+    test.assert_eq(fxq8_24.epsilon().raw, 1)
+    test.assert_eq(fxq8_24.frac_bits(), 24)
+
+@test
+fn test_the_q8_24_range_is_128_and_the_step_is_the_reason_to_choose_it()
+    test.assert_eq(fxq8_24.min_value().raw, -2147483648)
+    test.assert_eq(fxq8_24.max_value().raw, 2147483647)
+    test.assert_eq(fxq8_24.to_int(fxq8_24.min_value()), -128)
+    // Two hundred and fifty-six steps to a Q16.16 step: the precision
+    // the format is bought with.
+    test.assert_eq(fxq8_24.to_q16_16(fxq8_24.from_raw(256)).raw, 1)
+
+@test
+fn test_q8_24_arithmetic()
+    let half = fxq8_24.from_float(0.5)
+    test.assert_eq(fxq8_24.mul(half, half).raw, 4194304)
+    test.assert_eq(fxq8_24.div(half, fxq8_24.from_int(2)).raw, 4194304)
+    test.assert_eq(fxq8_24.add(fxq8_24.one(), half).raw, 25165824)
+    test.assert_eq(fxq8_24.sub(fxq8_24.one(), half).raw, 8388608)
+    test.assert_eq(fxq8_24.neg(half).raw, -8388608)
+    test.assert_eq(fxq8_24.abs(fxq8_24.from_float(-0.5)).raw, 8388608)
+    test.assert_eq(fxq8_24.compare(half, fxq8_24.one()), -1)
+
+@test
+fn test_the_gain_constant_a_pid_is_given_as_a_ratio()
+    // Three five-hundredths, with no configuration file spelling out
+    // 0.006 and no float on the device.
+    test.assert_eq(fxq8_24.from_ratio(3, 500).raw, 100663)
+    test.assert_eq(fxq8_24.from_int(3).raw, 50331648)
+    test.assert_eq(fxq8_24.raw(fxq8_24.from_raw(100663)), 100663)
+
+@test
+fn test_the_q8_24_families()
+    let hi = fxq8_24.max_value()
+    test.assert_eq(fxq8_24.sat_add(hi, fxq8_24.one()).raw, hi.raw)
+    test.assert_eq(fxq8_24.sat_sub(fxq8_24.min_value(), fxq8_24.one()).raw, -2147483648)
+    test.assert_eq(fxq8_24.sat_mul(hi, fxq8_24.from_int(2)).raw, hi.raw)
+    test.assert_eq(fxq8_24.sat_div(hi, fxq8_24.from_float(0.5)).raw, hi.raw)
+    test.assert_eq(fxq8_24.wrap_add(hi, fxq8_24.epsilon()).raw, -2147483648)
+    test.assert_eq(fxq8_24.wrap_sub(fxq8_24.min_value(), fxq8_24.epsilon()).raw, 2147483647)
+    test.assert_eq(fxq8_24.wrap_mul(fxq8_24.min_value(), fxq8_24.from_int(2)).raw, 0)
+
+@test
+fn test_q8_24_rounding_and_the_hub_conversions()
+    let neg = fxq8_24.from_float(-1.5)
+    test.assert_eq(fxq8_24.floor(neg).raw, -33554432)
+    test.assert_eq(fxq8_24.ceil(neg).raw, -16777216)
+    test.assert_eq(fxq8_24.round(neg).raw, -33554432)
+    test.assert_eq(fxq8_24.frac(neg).raw, 8388608)
+    test.assert_eq(fxq8_24.to_q16_16(fxq8_24.from_float(0.5)).raw, 32768)
+    test.assert_eq(fxq8_24.from_q16_16(fxq16_16.from_float(0.5)).raw, 8388608)
+    // Narrowing in range: a Q16.16 holding 1000.0 does not fit ±128.
+    test.assert_eq(fxq8_24.from_q16_16(fxq16_16.from_int(1000)).raw, 2147483647)
+    test.assert_approx(fxq8_24.to_float(fxq8_24.from_float(0.5)), 0.5, 0.0)
+
+// ── UQ16.16, the unsigned half ──────────────────────────────────────
+
+@test
+fn test_the_unsigned_format_buys_double_the_integer_range()
+    test.assert_eq(fxuq16_16.zero().raw, 0)
+    test.assert_eq(fxuq16_16.min_value().raw, 0)
+    test.assert_eq(fxuq16_16.max_value().raw, 4294967295)
+    test.assert_eq(fxuq16_16.one().raw, 65536)
+    test.assert_eq(fxuq16_16.epsilon().raw, 1)
+    test.assert_eq(fxuq16_16.frac_bits(), 16)
+    test.assert_eq(fxuq16_16.to_int(fxuq16_16.max_value()), 65535)
+
+@test
+fn test_a_negative_raw_clamps_to_zero_rather_than_becoming_four_billion()
+    // The opposite of what a C cast would do, and the bug this format
+    // is chosen to avoid.
+    test.assert_eq(fxuq16_16.from_raw(-1).raw, 0)
+    test.assert_eq(fxuq16_16.from_float(-1.0).raw, 0)
+    test.assert_eq(fxuq16_16.from_int(-1).raw, 0)
+    test.assert_eq(fxuq16_16.from_ratio(-1, 2).raw, 0)
+    test.assert_eq(fxuq16_16.from_q16_16(fxq16_16.from_int(-3)).raw, 0)
+
+@test
+fn test_subtracting_below_zero_is_a_refusal_and_not_a_negative_number()
+    // An elapsed time that came out negative is a clock that went
+    // backwards, and a signed format would have carried it forward.
+    test.assert_raises(unsigned_sub_below_zero)
+    test.assert_eq(fxuq16_16.sat_sub(fxuq16_16.from_ratio(1, 4), fxuq16_16.one()).raw, 0)
+    test.assert_eq(fxuq16_16.wrap_sub(fxuq16_16.zero(), fxuq16_16.epsilon()).raw, 4294967295)
+
+fn unsigned_sub_below_zero() -> Int
+    fxuq16_16.sub(fxuq16_16.from_ratio(1, 4), fxuq16_16.one()).raw
+
+@test
+fn test_the_unsigned_multiply_uses_an_unsigned_intermediate()
+    // Two full-scale raw values multiply past what a signed Int holds,
+    // so the intermediate is computed in u64.
+    let half = fxuq16_16.from_float(0.5)
+    test.assert_eq(fxuq16_16.mul(half, half).raw, 16384)
+    test.assert_eq(fxuq16_16.mul(fxuq16_16.from_int(3), fxuq16_16.from_int(4)).raw, 786432)
+    test.assert_eq(fxuq16_16.sat_mul(fxuq16_16.max_value(), fxuq16_16.from_int(2)).raw, 4294967295)
+
+@test
+fn test_the_rest_of_the_unsigned_surface()
+    let three = fxuq16_16.from_int(3)
+    test.assert_eq(fxuq16_16.add(three, fxuq16_16.one()).raw, 262144)
+    test.assert_eq(fxuq16_16.div(three, fxuq16_16.from_int(2)).raw, 98304)
+    test.assert_eq(fxuq16_16.div(three, fxuq16_16.zero()).raw, 4294967295)
+    test.assert_eq(fxuq16_16.sat_add(fxuq16_16.max_value(), fxuq16_16.one()).raw, 4294967295)
+    test.assert_eq(fxuq16_16.sat_div(three, fxuq16_16.from_ratio(1, 1000)).raw, 4294967295)
+    test.assert_eq(fxuq16_16.wrap_add(fxuq16_16.max_value(), fxuq16_16.epsilon()).raw, 0)
+    test.assert_eq(fxuq16_16.wrap_mul(fxuq16_16.max_value(), fxuq16_16.from_int(2)).raw, 4294967294)
+    test.assert_eq(fxuq16_16.floor(fxuq16_16.from_ratio(3, 2)).raw, 65536)
+    test.assert_eq(fxuq16_16.ceil(fxuq16_16.from_ratio(3, 2)).raw, 131072)
+    test.assert_eq(fxuq16_16.round(fxuq16_16.from_ratio(3, 2)).raw, 131072)
+    test.assert_eq(fxuq16_16.frac(fxuq16_16.from_ratio(3, 2)).raw, 32768)
+    test.assert_eq(fxuq16_16.compare(three, fxuq16_16.one()), 1)
+    test.assert_eq(fxuq16_16.raw(fxuq16_16.from_raw(65536)), 65536)
+    test.assert_eq(fxuq16_16.to_q16_16(three).raw, 196608)
+    // The direction that can lose: the signed positive range is half.
+    test.assert_eq(fxuq16_16.to_q16_16(fxuq16_16.max_value()).raw, 2147483647)
+    test.assert_approx(fxuq16_16.to_float(fxuq16_16.from_float(0.5)), 0.5, 0.0)
+
+// ── The text half ───────────────────────────────────────────────────
+
+@test
+fn test_a_fixed_point_value_has_a_terminating_decimal_expansion()
+    // The denominator is a power of two, so the expansion stops and
+    // `places` chooses where rather than how much to guess.
+    test.assert_eq(fixedpoint.format_raw(32768, 16, 4), "0.5000")
+    test.assert_eq(fixedpoint.format_raw(65536, 16, 0), "1")
+    test.assert_eq(fixedpoint.format_raw(-32768, 16, 1), "-0.5")
+    test.assert_eq(fixedpoint.format_raw(21845, 16, 5), "0.33333")
+
+@test
+fn test_digits_past_places_round_halves_away_from_zero()
+    // 0.25 at one place is 0.3, and -0.25 is -0.3.
+    test.assert_eq(fixedpoint.format_raw(16384, 16, 1), "0.3")
+    test.assert_eq(fixedpoint.format_raw(-16384, 16, 1), "-0.3")
+
+@test
+fn test_parse_accepts_a_sign_digits_a_point_and_nothing_else()
+    match fixedpoint.parse_raw("-0.5", 16, 32, true)
+        Ok(raw) => test.assert_eq(raw, -32768)
+        Err(e)  => test.fail(e.message())
+    match fixedpoint.parse_raw("  1.5  ", 16, 32, true)
+        Ok(raw) => test.assert_eq(raw, 98304)
+        Err(e)  => test.fail(e.message())
+    match fixedpoint.parse_raw("3", 16, 32, true)
+        Ok(raw) => test.assert_eq(raw, 196608)
+        Err(e)  => test.fail(e.message())
+
+@test
+fn test_an_exponent_is_not_a_fixed_point_number()
+    // A fixed-point format has a bounded range by construction, so a
+    // value written in exponent notation does not belong in one.
+    match fixedpoint.parse_raw("1e3", 16, 32, true)
+        Ok(_)  => test.fail("`e` is not a digit")
+        Err(e) =>
+            match e
+                FxBadDigit(at, ch) =>
+                    test.assert_eq(at, 1)
+                    test.assert_eq(ch, 101)
+                _                  => test.fail("expected FxBadDigit: ${e.message()}")
+
+@test
+fn test_a_value_outside_the_container_is_refused_and_not_clamped()
+    // A configuration file asking for 40000.0 in a Q16.16 is a
+    // configuration file to fix.
+    match fixedpoint.parse_raw("40000.0", 16, 32, true)
+        Ok(_)  => test.fail("40000.0 does not fit a Q16.16")
+        Err(e) =>
+            match e
+                FxOutOfRange(_raw, limit) => test.assert_eq(limit, 2147483647)
+                _                         => test.fail("expected FxOutOfRange: ${e.message()}")
+
+@test
+fn test_an_input_with_no_digits_is_refused()
+    match fixedpoint.parse_raw("-", 16, 32, true)
+        Ok(_)  => test.fail("a lone sign is not a number")
+        Err(e) =>
+            match e
+                FxNoDigits => test.assert_eq(1, 1)
+                _          => test.fail("expected FxNoDigits: ${e.message()}")
+    match fixedpoint.parse_raw("1.2.3", 16, 32, true)
+        Ok(_)  => test.fail("two decimal points")
+        Err(e) =>
+            match e
+                FxMalformed(at) => test.assert_eq(at, 3)
+                _               => test.fail("expected FxMalformed: ${e.message()}")
+
+@test
+fn test_the_four_typed_wrappers_are_the_engine_with_the_widths_filled_in()
+    test.assert_eq(fixedpoint.format_q16_16(fxq16_16.from_ratio(1, 4), 3), "0.250")
+    test.assert_eq(fixedpoint.format_q1_15(fxq1_15.from_ratio(1, 4), 3), "0.250")
+    test.assert_eq(fixedpoint.format_q8_24(fxq8_24.from_ratio(1, 4), 3), "0.250")
+    test.assert_eq(fixedpoint.format_uq16_16(fxuq16_16.from_ratio(1, 4), 3), "0.250")
+
+@test
+fn test_the_parses_answer_a_raw_because_a_value_struct_is_no_result_payload()
+    match fixedpoint.parse_q16_16("1.5")
+        Ok(raw) => test.assert_eq(fxq16_16.from_raw(raw).raw, 98304)
+        Err(e)  => test.fail(e.message())
+    match fixedpoint.parse_q1_15("0.5")
+        Ok(raw) => test.assert_eq(fxq1_15.from_raw(raw).raw, 16384)
+        Err(e)  => test.fail(e.message())
+    match fixedpoint.parse_q8_24("0.5")
+        Ok(raw) => test.assert_eq(fxq8_24.from_raw(raw).raw, 8388608)
+        Err(e)  => test.fail(e.message())
+    match fixedpoint.parse_uq16_16("3")
+        Ok(raw) => test.assert_eq(fxuq16_16.from_raw(raw).raw, 196608)
+        Err(e)  => test.fail(e.message())
+
+@test
+fn test_an_unsigned_format_does_not_read_a_leading_minus_as_a_number()
+    match fixedpoint.parse_uq16_16("-1.0")
+        Ok(_)  => test.fail("a UQ16.16 holds no negative number")
+        Err(e) =>
+            match e
+                FxOutOfRange(_raw, limit) => test.assert_eq(limit, 0)
+                _                         => test.fail("expected FxOutOfRange: ${e.message()}")
+
+@test
+fn test_a_format_prints_under_its_own_name()
+    test.assert_eq(fixedpoint.format_name(16, 32, true), "Q16.16")
+    test.assert_eq(fixedpoint.format_name(16, 32, false), "UQ16.16")
+    test.assert_eq(fixedpoint.format_name(15, 16, true), "Q1.15")
+    test.assert_eq(fixedpoint.format_name(24, 32, true), "Q8.24")
