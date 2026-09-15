@@ -1,6 +1,6 @@
 [package]
 name        = "fixedpoint-nv"
-version     = "0.0.1"
+version     = "0.0.2"
 description = "Q-format fixed-point arithmetic as @value types — Q16.16, Q1.15, Q8.24 and unsigned UQ16.16 — with the wide intermediate, the saturating and wrapping families, and decimal in both directions; plus micromath's float approximations with stated error bounds, for the cores where the embedded tier refuses std.math because it would link libm.  Interface only — every body is a todo()."
 license     = "Apache-2.0"
 

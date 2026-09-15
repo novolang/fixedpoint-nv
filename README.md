@@ -1,223 +1,283 @@
 # fixedpoint-nv
 
-**Status: NOT IMPLEMENTED — interface only.**
+**Fixed-point arithmetic** represents a fractional number as an ordinary
+integer with the binary point at a fixed place. A Q16.16 number is the value
+multiplied by 65536 and stored in 32 bits: sixteen bits of integer part,
+sixteen of fraction. This package brings four such formats to novo-lang,
+together with a set of approximations for square roots, logarithms and
+trigonometry. It exists because a microcontroller with no floating-point unit
+cannot afford the library those functions normally come from. The reference
+implementations are the Rust crates [fixed](https://docs.rs/fixed) and
+[micromath](https://docs.rs/micromath).
+[pid-nv](https://novo-lang.org/packages/pid-nv) is built on it.
 
-Every public function below is published with its signature and its
-effect row, and every body is `todo()`.  Installing this package works;
-calling it panics with `not implemented`.
+**Status: NOT IMPLEMENTED — interface only.** Every function is declared with
+its full signature, but every body is a `todo()` that panics when called. The
+package is published so its design can be reviewed and depended on before it
+is implemented. Version 0.1.0 will be the first working release.
 
-## What this is
+## What it is
 
-Arithmetic for a core that has no floating-point unit, in two halves.
+A **Q format** is written `Qm.n`: `m` bits of integer part and `n` bits of
+fraction, in one signed container. The value stored is the real number times
+two to the power `n`, rounded to an integer. Adding two Q16.16 numbers is one
+integer addition. Multiplying them is one integer multiplication followed by
+a shift, because the product has twice as many fractional bits as either
+operand.
 
-**Q-format fixed point** — four `@value` types, each one integer with a
-binary point at a fixed place: add, subtract, multiply with the wide
-intermediate, divide, in three families (trapping, saturating,
-wrapping), with conversion to and from `Int` and `Float`, rounding,
-comparison, and decimal in both directions.
+Two things follow that matter more than the speed.
 
-**micromath's float approximations** — `sqrt`, `invsqrt`, `sin`, `cos`,
-`tan`, `atan`, `atan2`, `exp`, `ln`, `log2`, `powf` and `powi`, each
-with a stated error bound that `tests/fxmath_tests.nv` asserts, written
-in arithmetic a soft-float core can afford.
+The **step is constant**. A floating-point number's step near 1000 is a
+thousand times its step near 1. A Q16.16 number's step is two to the minus
+sixteenth everywhere in its range. A control loop written in fixed point
+therefore converges where the same loop in floating point oscillates around a
+setpoint far from zero.
 
-## Why it exists: the compiler says so
+The **range is fixed and small**, so arithmetic can leave it. What happens
+then is a choice this package makes the caller state at each call site. The
+plain operations **trap**, which stops the program at the line. The
+saturating operations **clamp** to the end of the range. The wrapping
+operations **wrap** round the container.
 
-A function that carries `@tier(embedded)` and calls `math.sqrt` is
-refused, and the error names the reason:
+These are the four formats.
 
-```
-tier error: function 'root' is @tier(embedded) but calls 'math.sqrt' —
-it lowers to an `llvm.sqrt`-family float intrinsic, which on a
-soft-float freestanding target LLVM expands to a libm call, and linking
-libm into a 64 KB image is a hidden cost this tier refuses (the IR looks
-free; the object file is not).  Use fixed-point arithmetic, or link your
-own implementation through @ffi and call that.  The allocation-free half
-of `math` (min, max, is_nan, the constants) IS admitted [E4000]
-```
-
-`sqrt`, `pow`, `log`, `log2`, `log10`, `exp`, `sin`, `cos`, `tan`,
-`asin`, `acos`, `atan`, `atan2`, `hypot`, `floor`, `ceil`, `round` and
-`trunc` are all in that set.  The error offers three ways out, and this
-package is two of them: the fixed-point arithmetic it names first, and a
-set of approximations that are not an `@ffi` call into somebody's libm.
-
-## The shipped Q formats, and why these four
-
-A type cannot carry an integer parameter — there are no const generics,
-and a `@value` struct takes no type parameter at all — so each format is
-a type written out by hand rather than a `Fixed<16, 16>`.  That is the
-cost.  What it buys is the thing the `fixed` crate is really for:
-**adding a Q16.16 to a Q8.24 is a compile error**, not a silent scaling
-bug, and the two conversions between them are calls a reader can see.
-
-| type | range | step | reach for it when |
+| Type | Range | Step | Reach for it when |
 | --- | --- | --- | --- |
-| `FxQ16_16` | ±32768 | 1.5e-5 | nothing says otherwise — the hub, and where the worked examples are |
-| `FxQ1_15` | [-1, 1) | 3.1e-5 | a filter, an audio sample, a normalised axis: the product of two in-range numbers stays in range |
-| `FxQ8_24` | ±128 | 6.0e-8 | a control loop whose error term is small and whose gain is large |
-| `FxUQ16_16` | [0, 65536) | 1.5e-5 | a duty cycle, an elapsed time, a distance: no sign, double the integer range, and subtracting below zero is a refusal |
+| `FxQ16_16` | ±32768 | 1.5e-5 | nothing says otherwise. It is the format the others convert through. |
+| `FxQ1_15` | -1 to just under 1 | 3.1e-5 | a filter tap, an audio sample, a normalised axis. The product of two in-range values stays in range. |
+| `FxQ8_24` | ±128 | 6.0e-8 | a control loop whose error is small and whose gain is large. |
+| `FxUQ16_16` | 0 to just under 65536 | 1.5e-5 | a duty cycle, an elapsed time, a distance. No sign, twice the integer range, and subtracting below zero is a refusal. |
 
-**Why the set stops here.** The multiply needs the product of two raw
-values before it shifts the scale back out — 64 bits for a 32-bit
-format — and `Int` IS 64 bits, so that intermediate is free: one `mul`
-and one `ashr` on a Cortex-M4.  A Q32.32 would need a 128-bit
-intermediate and the language has no type for one.  `FxQ8_24.div`
-already uses fifty-five of the sixty-four bits when it shifts, and a
-Q4.28 would not fit.  So the containers stop at 32 bits, and that is
-arithmetic rather than taste.
+The second half of the package is a set of **approximations**: functions that
+answer a value close enough to the true one, computed in arithmetic a device
+can afford. Each carries an **error bound**, which is how far the answer may
+be from the true value, over a stated **domain**, which is the range of
+inputs the bound holds for.
 
-`FxUQ16_16` is the one exception that needed care: two full-scale
-unsigned raw values multiply past what a *signed* `Int` holds, so that
-one multiply computes its intermediate in `u64`.
+| Function | Bound | Domain |
+| --- | --- | --- |
+| `sqrt`, `invsqrt` | relative 2e-3 | x above 0 |
+| `sin`, `cos` | absolute 3e-3 | every finite x |
+| `tan` | absolute 3e-3 | every finite x |
+| `atan`, `atan2` | absolute 5e-3 radians, quadrant exact | every finite x |
+| `exp` | relative 3e-3 | -10 to 10 |
+| `ln`, `log2` | absolute 3e-3 | x above 0 |
+| `powf` | relative 1e-2 | x from 1e-3 to 1e3, y within 4 |
+| `powi` | exact | binary exponentiation |
+| `floor`, `ceil`, `round`, `trunc`, `abs` | exact | every finite x |
 
-## The layer, and why
+## Install
 
-`core`.  Integer and float arithmetic over values the caller already
-holds; no function declares an effect, nothing is read and nothing is
-written.
-
-It carries `tests/embedded_probe.nv`, so the device claim is **built**
-rather than asserted: the five arithmetic modules speak `Int`, `Float`,
-`u64` and nothing else, and the probe compiles to a Cortex-M4 ELF for
-`--target=nrf52-qemu` — a PID step in Q16.16, a filter tap in Q1.15, a
-duty ramp in UQ16.16, and a heading out of `atan2`.  That claim is the
-whole argument for the package: everything here is `+`, `-`, `*`, `/`,
-comparisons and the two casts between `Int` and `Float`, which is
-exactly the set the tier admits.
-
-`fixedpoint` is deliberately outside the probe: it speaks `Str`, and one
-host-only function anywhere in a compilation unit is an undefined symbol
-at embedded link time whether or not the firmware calls it.
-
-**A device that must print one of these numbers** calls
-`fixedpoint.format_raw`'s arithmetic itself and hands the integer and
-fractional parts to [`numfmt-nv`](https://github.com/novolang/numfmt-nv),
-which writes digits into a buffer the caller owns and allocates nothing.
-That is one line a firmware can afford; a `Str` is not.  This package
-does not depend on numfmt-nv, because printing is the caller's step and
-because the embedded probe is built from the package's own core modules
-and nothing they depend on.
-
-## Adding it, and checking it
-
-```bash
-novo pkg add fixedpoint-nv   # into your novo.toml
-novo pkg build               # type- and effect-check the package
-novo test --isolate tests/fixedpoint_tests.nv
-novo test --isolate tests/fxmath_tests.nv
+```
+novo pkg add fixedpoint-nv
 ```
 
-Both suites are red today and that is the point of the release: every
-assertion fails with `not implemented: <module>.<fn>`.  They turn green
-one at a time as bodies land.
-
-**One caveat on reading that output.** Three assertions in
-`fixedpoint_tests.nv` use `test.assert_raises` to say that an operation
-traps, and `todo()` panics, so `assert_raises` is satisfied by the stub
-and those three are GREEN today while meaning nothing.  That is a
-toolchain defect rather than a property of this package; the tests are
-written the way they should be written once the bodies land.
-
-## The one example that will work
+## Example
 
 ```novo
 use fxq16_16
 use fixedpoint
 
 fn main() [io]
-    // A gain given as a ratio, with no float on the device.
+    // A gain of 0.006, written as a ratio because the device has no float.
     let kp = fxq16_16.from_ratio(3, 500)
+
+    // The error term: a setpoint of 20 less a measurement held as a raw
+    // value, which is the number times 65536.
     let err = fxq16_16.sub(fxq16_16.from_int(20), fxq16_16.from_raw(1376256))
 
-    // The integrator saturates, so an actuator at full travel stays
-    // there rather than wrapping to the far stop.
+    // The saturating add clamps at the format's limit. An integrator that
+    // wrapped instead would drive an actuator to the far stop.
     let out = fxq16_16.sat_add(fxq16_16.zero(), fxq16_16.mul(kp, err))
 
+    // Four decimal places. This line is host-only: it makes a string.
     println(fixedpoint.format_q16_16(out, 4))
 ```
 
-## The load-bearing interface
+Build and test with `novo pkg build` and
+`novo test --isolate tests/fixedpoint_tests.nv`. Today `novo test` fails on
+purpose: every test reaches a `not implemented: <module>.<fn>` panic. The
+tests are the specification the implementation will have to satisfy.
 
-`FxQ16_16`, and the three families of arithmetic over it:
+## What the package contains
 
-```novo
-pub @value
-struct FxQ16_16
-    raw: Int
+| Module | Contents |
+| --- | --- |
+| `fxq16_16` | The Q16.16 type and thirty-one functions over it: the three arithmetic families, the conversions, rounding, comparison and the constants. This is where the semantics are written out. |
+| `fxq1_15` | The same surface at the Q1.15 scale, plus the two conversions to and from Q16.16. |
+| `fxq8_24` | The same surface at the Q8.24 scale, plus the two conversions to and from Q16.16. |
+| `fxuq16_16` | The same surface unsigned, plus the two conversions to and from Q16.16. |
+| `fxmath` | The approximations over `Float`, each with its error bound, and the five exact rounding functions. |
+| `fixedpoint` | Decimal in both directions, as text, and the error type. Host only: it makes strings. |
+
+## How to choose an entry point
+
+**Start with `fxq16_16`.** It is the format the worked examples use and the
+one the other three convert through. Move to another only when its range or
+its step is wrong for the quantity.
+
+**Use `fxmath` when a value is already a `Float` and the function is not
+available.** Every function there is written in additions, multiplications
+and comparisons, so it compiles for a device where the standard library's
+version does not.
+
+**Use the untyped text functions for a format this package does not ship.**
+`fixedpoint.format_raw` and `parse_raw` describe a format with plain numbers
+rather than a type, so a Q12.20 value can be printed and read with them. The
+four typed pairs are one line each on top.
+
+## The rules a user needs
+
+1. **Choose the overflow behaviour at the call site.** `add` traps
+   (SPEC section 13.2), `sat_add` clamps, `wrap_add` wraps. A control loop's
+   integrator wants the saturating family. A phase accumulator wants the
+   wrapping one. Everything else wants the trapping one, because an overflow
+   there is a bug and a trap names the line.
+2. **Adding two different formats is a compile error.** `FxQ16_16` and
+   `FxQ8_24` are different types, and the conversion between them is a call a
+   reader can see. That is the point of writing four types out rather than
+   one parameterised one.
+3. **`raw` is the number times two to the power of the format's fractional
+   bits, and it never leaves its container.** A caller may read the field and
+   hand it straight to a peripheral.
+4. **A fallible direction answers a raw integer, not a formatted value.** A
+   `@value` struct may not be the payload of a `Result`, so
+   `fixedpoint.parse_q16_16` answers a `Result` over `Int` and
+   `fxq16_16.from_raw` is the line that follows it.
+5. **The decimal expansion terminates, so `places` chooses where to stop.** A
+   fixed-point value's decimal form is exact and finite. Printing is not an
+   approximation here, unlike printing a float.
+6. **The error bounds are a contract.** Each function in `fxmath` states its
+   bound over its domain, and `tests/fxmath_tests.nv` asserts that number.
+   Widening a bound is a breaking change. Tightening one is not.
+7. **`tan`'s bound is absolute, not relative.** It is `sin` divided by `cos`,
+   so the two bounds compound and the relative error grows without limit as
+   the cosine approaches zero.
+8. **`ln`'s bound is absolute, not relative.** The logarithm of 1 is zero, and
+   no relative bound around zero is meaningful.
+9. **`exp` outside its stated domain is still monotone and still the right
+   order of magnitude**, but the bound does not hold there.
+10. **Subtracting below zero in the unsigned format is a refusal, not a large
+    positive number.** That is what `FxUQ16_16` is for.
+11. **The unsigned multiply computes its intermediate as an unsigned 64-bit
+    value.** Two full-scale unsigned raw values multiply past what a signed
+    `Int` holds. Every other multiply in the package fits in a signed `Int`.
+
+## Running on a microcontroller
+
+The package states that its modules run on a device with no heap allocator,
+and the compiler checks that claim on every build. It covers the five
+arithmetic modules, which speak `Int`, `Float`, `u64` and nothing else.
+
+This claim is the reason the package exists. A function at the device tier
+that calls `math.sqrt` is refused, because that call lowers to a float
+intrinsic that a soft-float freestanding target expands into a library call,
+and linking that library into a 64 KiB image is a cost the tier will not pay.
+The refusal names three ways out, and this package is two of them:
+fixed-point arithmetic, and approximations that are not a foreign call into
+somebody else's library. `sqrt`, `pow`, `log`, `log2`, `log10`, `exp`, `sin`,
+`cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `hypot`, `floor`, `ceil`,
+`round` and `trunc` are all in the refused set.
+
+`tests/embedded_probe.nv` is the claim as a program that either builds or
+does not. It runs a control-loop step in Q16.16, a filter tap in Q1.15, a
+duty ramp in UQ16.16 and a heading out of `atan2`.
+
+```bash
+novo build --target=nrf52-qemu tests/embedded_probe.nv
 ```
 
-One integer in the caller's frame.  `raw` is the number times 65536,
-held inside the 32-bit container, and the invariant that it never leaves
-that container is what lets a caller read the field and hand it to a
-peripheral.
+That command was run against this release. It produces a Cortex-M4
+executable, `embedded_probe.elf`. The probe builds; it is not run, because
+every function it calls is a `todo()` that would panic on the first line.
 
-Everything else follows from two decisions:
+The `fixedpoint` module is outside the claim. It makes strings, and one
+host-only function anywhere in a compilation unit is an undefined symbol at
+link time on a device, whether or not the firmware calls it. A device that
+must print one of these numbers does the arithmetic of
+`fixedpoint.format_raw` itself and hands the integer and fractional parts to
+[numfmt-nv](https://novo-lang.org/packages/numfmt-nv), which writes digits
+into a buffer the caller owns and allocates nothing.
 
-- **The step is constant.** A float's step near 1000 is a thousand times
-  its step near 1; a Q16.16's is 2^-16 everywhere. That is why a
-  fixed-point control loop converges where a float one oscillates, and
-  why `epsilon()` is a number a termination test can compare against
-  rather than a scale-dependent guess.
-- **Overflow is a choice the caller makes, per call site.** `add` traps
-  (SPEC § 13.2), `sat_add` clamps, `wrap_add` wraps. A PID integrator
-  wants the second, a phase accumulator wants the third, and everything
-  else wants the first — because an overflow there is a bug and a trap
-  names the line. Shipping only one of the three would have made two of
-  those three consumers write it themselves.
+## What is not included
 
-Three consequences a reviewer should push on:
+- **A format parameterised by its bit positions.** novo-lang has no integer
+  type parameters, and a `@value` struct takes no type parameter at all.
+  Each format is written out by hand.
+- **Containers wider than 32 bits.** A multiply needs the product of two raw
+  values before it shifts the scale back, which is 64 bits for a 32-bit
+  format, and `Int` is 64 bits, so that intermediate is free. A Q32.32 would
+  need a 128-bit intermediate and the language has no type for one.
+  `FxQ8_24`'s divide already uses fifty-five of the sixty-four bits.
+- **Formats between the four shipped.** `fixedpoint.format_raw` and
+  `parse_raw` work for any of them. The typed arithmetic does not.
+- **Printing on a device.** See "Running on a microcontroller".
+- **A dependency on numfmt-nv.** Printing is the caller's step, and the
+  device probe is built from this package's own modules and nothing they
+  depend on.
+- **Exact transcendental functions.** Every function in `fxmath` is an
+  approximation with a stated bound. A program that needs more digits needs a
+  machine with a floating-point unit and the standard library's `math`.
 
-- **A parse answers a raw, not a number.** A `@value` struct may not be
-  the payload of a `Result` — it is unboxed and the position has no
-  unboxed lowering — so `fixedpoint.parse_q16_16` answers
-  `Result<Int, FxError>` and `fxq16_16.from_raw` is the line that
-  follows. Every fallible direction in the package has that shape.
-- **The text engine takes two integers, not a type.**
-  `format_raw(raw, frac_bits, places)` and
-  `parse_raw(s, frac_bits, total_bits, signed)` describe the format with
-  numbers, and the four typed wrappers are one line each on top. That is
-  the closest thing to the type parameter the language does not have,
-  and it is what lets a caller who needs a Q12.20 use the text half
-  anyway.
-- **The bounds in `fxmath` are a contract.** Each function's doc comment
-  states an error bound over a stated domain and `tests/fxmath_tests.nv`
-  asserts that number. Widening one is a breaking change; tightening one
-  is not.
+## Related packages
 
-## The reference implementations
+- [pid-nv](https://novo-lang.org/packages/pid-nv) is a proportional-integral-
+  derivative controller. Its fixed-point form is written over `FxQ16_16`.
+- [numfmt-nv](https://novo-lang.org/packages/numfmt-nv) writes digits into a
+  buffer the caller owns. It is how a device prints one of these numbers.
+- [units-nv](https://novo-lang.org/packages/units-nv) is physical quantities
+  and conversions between them, on a host. It answers what a number means;
+  this package answers how a number is stored.
+- `std.math` in the standard library is the real thing, on a machine that can
+  afford it: correctly rounded, and refused at the device tier for the reason
+  above.
+- [bitfield-nv](https://novo-lang.org/packages/bitfield-nv) reads a sensor's
+  raw register field. A value read with it is usually converted to one of
+  these formats next.
 
-`fixed` (Rust, MIT/Apache-2.0) for the Q-format surface and the
-semantics of the three families, and `micromath` (Rust, Apache-2.0) for
-the approximations and the algorithms behind them — the reciprocal-root
-estimate with one Newton step, the parabolic sine with a correction
-pass, the rational arctangent with the reciprocal identity outside
-`[-1, 1]`, and the exponent-field logarithm.
+## Tests
 
-Both crates generate per-type code with macros. There is no macro here,
-so what they generate this package writes out: four modules that are the
-same thirty-odd functions at four different scales, with each header
-saying what DIFFERS and `fxq16_16` carrying the semantics once. The
-repetition is the price of `FxQ16_16 + FxQ8_24` being a compile error.
+```bash
+novo test --isolate tests/fixedpoint_tests.nv   # 45 tests: the four formats
+novo test --isolate tests/fxmath_tests.nv       # 19 tests: the bounds
+```
 
-The error bounds in the doc comments are the ones this package asserts
-for its own implementations over the domains it states; they follow
-micromath's algorithms, and the numbers are in
-`tests/fxmath_tests.nv` rather than only in prose.
+The references are `fixed` for the Q-format surface and the meaning of the
+three families, and `micromath` for the approximations: the reciprocal-root
+estimate with one Newton step, the parabolic sine with a correction pass, the
+rational arctangent with the reciprocal identity outside -1 to 1, and the
+logarithm read out of the exponent field. The bounds asserted here are this
+package's own, over the domains stated above.
 
-## Status
+The tests compile today and fail at run, each on the
+`not implemented: <module>.<fn>` panic that is its body. That is the expected
+state of an interface release. They turn green one at a time as bodies land.
 
-| function | implemented |
+Three assertions in `tests/fixedpoint_tests.nv` say that an operation traps,
+and `todo()` panics, so those three pass today while meaning nothing. That is
+a defect in the test runner rather than a property of this package, and the
+assertions are written the way they should be written once the bodies land.
+
+## Implementation status
+
+| Item | Implemented |
 | --- | --- |
-| `fxq16_16` — 31 functions over `FxQ16_16` | no |
-| `fxq1_15` — 33 functions over `FxQ1_15`, with the two hub conversions | no |
-| `fxq8_24` — 33 functions over `FxQ8_24`, with the two hub conversions | no |
-| `fxuq16_16` — 31 functions over `FxUQ16_16`, with the two hub conversions | no |
+| `fxq16_16.FxQ16_16`, `fxq1_15.FxQ1_15`, `fxq8_24.FxQ8_24`, `fxuq16_16.FxUQ16_16`, `fixedpoint.FxError` | declared |
+| `fxq16_16`: 31 functions over `FxQ16_16` | no |
+| `fxq1_15`: 33 functions, including the two conversions to and from Q16.16 | no |
+| `fxq8_24`: 33 functions, including the two conversions to and from Q16.16 | no |
+| `fxuq16_16`: 31 functions, including the two conversions to and from Q16.16 | no |
 | `fxmath.sqrt`, `.invsqrt` | no |
 | `fxmath.sin`, `.cos`, `.tan`, `.atan`, `.atan2` | no |
 | `fxmath.exp`, `.ln`, `.log2` | no |
 | `fxmath.powf`, `.powi` | no |
 | `fxmath.floor`, `.ceil`, `.round`, `.trunc`, `.abs` | no |
 | `fixedpoint.format_raw`, `.parse_raw`, `.format_name` | no |
-| `fixedpoint.format_q16_16` … `.parse_uq16_16` (four pairs) | no |
+| `fixedpoint.format_q16_16` to `.parse_uq16_16`, four pairs | no |
 | `fixedpoint.FxError.message` | no |
+
+## Licence
+
+Apache-2.0. See `LICENSE`.
+
+<!-- docs/writing-a-readme.md is the style guide for this page. -->
