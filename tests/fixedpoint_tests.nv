@@ -115,7 +115,11 @@ fn test_the_wrapping_family_rounds_the_container()
 @test
 fn test_the_plain_family_traps_where_the_other_two_do_not()
     // An overflow in a sum that was meant to stay in range is a bug,
-    // and the trap names the line.
+    // and the trap names the line.  The same sum clamps under `sat_add`
+    // and rounds the container under `wrap_add`.
+    let hi = fxq16_16.max_value()
+    test.assert_eq(fxq16_16.sat_add(hi, fxq16_16.one()).raw, hi.raw)
+    test.assert_eq(fxq16_16.wrap_add(hi, fxq16_16.one()).raw, -2147418113)
     test.assert_raises(overflowing_add)
 
 fn overflowing_add() -> Int
@@ -305,9 +309,9 @@ fn test_a_negative_raw_clamps_to_zero_rather_than_becoming_four_billion()
 fn test_subtracting_below_zero_is_a_refusal_and_not_a_negative_number()
     // An elapsed time that came out negative is a clock that went
     // backwards, and a signed format would have carried it forward.
-    test.assert_raises(unsigned_sub_below_zero)
     test.assert_eq(fxuq16_16.sat_sub(fxuq16_16.from_ratio(1, 4), fxuq16_16.one()).raw, 0)
     test.assert_eq(fxuq16_16.wrap_sub(fxuq16_16.zero(), fxuq16_16.epsilon()).raw, 4294967295)
+    test.assert_raises(unsigned_sub_below_zero)
 
 fn unsigned_sub_below_zero() -> Int
     fxuq16_16.sub(fxuq16_16.from_ratio(1, 4), fxuq16_16.one()).raw
